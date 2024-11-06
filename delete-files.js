@@ -1,58 +1,57 @@
-const { Octokit } = require("@octokit/rest");
+async function main() {
+    const { Octokit } = await import('@octokit/rest');  // Usa import dinamico
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
-const stockSymbols = [ "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ", "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE", "VZ", "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD", "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX", "MDT", "TXN", "MMM", "NEE", "PM", "BA", "UNH", "MO", "DHR", "SPGI", "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS", "TGT", "ANTM", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI", "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS", "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL", "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW" ];
+    // Lista dei simboli dei file da eliminare
+    const stockSymbols = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ",
+        "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO",
+        "PFE", "VZ", "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
+        "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
+        "MDT", "TXN", "MMM", "NEE", "PM", "BA", "UNH", "MO", "DHR", "SPGI",
+        "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
+        "TGT", "ANTM", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI",
+        "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
+        "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
+        "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD",
+        "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
+        "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW"
+    ];
 
-const octokit = new Octokit({
-  auth: process.env.GITHUB_TOKEN
-});
+    try {
+        for (const symbol of stockSymbols) {
+            const path = `${symbol.toUpperCase()}.html`;  // Nome del file basato sul simbolo
 
-const owner = 'pammyhouse';
-const repo = 'dati-finanziari';
+            try {
+                // Ottieni il contenuto del file per avere lo SHA, necessario per l'eliminazione
+                const { data: file } = await octokit.rest.repos.getContent({
+                    owner: 'pammyhouse',
+                    repo: 'dati-finanziari',
+                    path: path,
+                });
 
-async function deleteFiles() {
-  const failedFiles = [];
-  const batchSize = 5; // Gruppi di 5 file alla volta
+                // Elimina il file usando lo SHA per confermare l'eliminazione
+                await octokit.rest.repos.deleteFile({
+                    owner: 'pammyhouse',
+                    repo: 'dati-finanziari',
+                    path: path,
+                    message: `Eliminazione automatica di ${path}`,
+                    sha: file.sha,  // SHA del file per l'eliminazione
+                });
 
-  for (let i = 0; i < stockSymbols.length; i += batchSize) {
-    const batch = stockSymbols.slice(i, i + batchSize);
-
-    for (const symbol of batch) {
-      const path = `${symbol.toUpperCase()}.html`;
-
-      try {
-        // Ottieni il contenuto del file per verificarne l'esistenza
-        const file = await octokit.repos.getContent({
-          owner,
-          repo,
-          path
-        });
-
-        if (file) {
-          await octokit.repos.deleteFile({
-            owner,
-            repo,
-            path,
-            message: `Deleting File ${path}`,
-            sha: file.data.sha
-          });
-          console.log(`File eliminato: ${path}`);
+                console.log(`File ${path} eliminato con successo.`);
+            } catch (error) {
+                if (error.status === 404) {
+                    console.log(`File ${path} non trovato, potrebbe essere già eliminato.`);
+                } else {
+                    console.error(`Errore durante l'eliminazione di ${path}:`, error);
+                }
+            }
         }
-      } catch (error) {
-        console.error(`Errore durante l'eliminazione del file ${path}:`, error);
-        failedFiles.push(path);
-      }
+    } catch (error) {
+        console.error('Errore generale durante l\'eliminazione dei file:', error);
     }
-
-    // Pausa tra i batch
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-
-  if (failedFiles.length > 0) {
-    console.error('File non eliminati:', failedFiles);
-  } else {
-    console.log('Tutti i file sono stati eliminati correttamente.');
-  }
 }
 
-// Esegui la funzione di eliminazione
-deleteFiles().catch(error => console.error('Errore generale:', error));
+// Avvia il processo di eliminazione
+main();

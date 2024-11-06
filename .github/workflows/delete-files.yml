@@ -3,7 +3,7 @@ name: Delete Files Daily
 on:
   schedule:
     # Questo eseguirà l'azione ogni giorno alle 2:00 AM UTC
-    - cron: '52 20 * * *'
+    - cron: '07 21 * * *'
 
 jobs:
   delete-files:

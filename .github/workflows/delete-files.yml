@@ -2,32 +2,23 @@ name: Delete Files Daily
 
 on:
   schedule:
-    # Questo eseguirà l'azione ogni giorno alle 2:00 AM UTC
-    - cron: '9 21 * * *'
+    - cron: '17 21 * * *'  # Esecuzione ogni giorno alle 21:09 UTC (corrispondente alle 22:09 CET)
 
 jobs:
-  delete-files:
+  delete:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout del repository
-      - name: Checkout repository
-        uses: actions/checkout@v2
+    - name: Checkout repository
+      uses: actions/checkout@v3  # Aggiornato alla versione v3
 
-      # Step 2: Configurazione di Node.js (per eseguire il codice JS)
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '16'
+    - name: Set up Node.js
+      uses: actions/setup-node@v3  # Aggiornato alla versione v3
+      with:
+        node-version: '16'  # O imposta la versione di Node.js che vuoi utilizzare
 
-      # Step 3: Installazione delle dipendenze
-      - name: Install dependencies
-        run: |
-          npm install @octokit/rest
-
-      # Step 4: Esecuzione dello script per eliminare i file
-      - name: Delete existing files
-        run: |
-          node delete-files.js
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Delete existing files
+      run: |
+        node delete-files.js
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

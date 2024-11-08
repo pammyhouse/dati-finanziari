@@ -17,7 +17,7 @@ def fetch_company_profile(symbol):
     return {
         "companyName": "",
         "description": "",
-        "image": ""
+        "image": ""}
     
 
 def fetch_stock_data(symbol):

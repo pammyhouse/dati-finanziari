@@ -15,8 +15,8 @@ def fetch_company_profile(symbol):
     print(f"Errore nel recupero del profilo per {symbol}")
     return None
 
-def fetch_stock_data(symbol, days=1500):
-    response = requests.get(f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}", params={"apikey": FMP_API_KEY, "timeseries": days})
+def fetch_stock_data(symbol):
+    response = requests.get(f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}", params={"apikey": FMP_API_KEY})
     if response.ok:
         return response.json()
     else:

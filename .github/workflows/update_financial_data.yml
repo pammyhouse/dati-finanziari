@@ -2,7 +2,7 @@ name: Update Financial Data
 
 on:
   schedule:
-    - cron: '10 18 * * *'  # Esecuzione ogni giorno alle 2:00 UTC
+    - cron: '0 */4 * * *'  # Esecuzione ogni 4 ore, all'inizio dell'ora (00:00, 04:00, 08:00, ecc.)
   workflow_dispatch:  # Per avviare manualmente se necessario
 
 jobs:
@@ -23,8 +23,35 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests PyGithub
 
+    - name: Set API Key based on the hour
+      id: set_api_key
+      run: |
+        # Ottieni l'ora corrente in UTC
+        hour=$(date -u +'%H')
+        
+        # Scegli la chiave API in base all'ora
+        if [ "$hour" -eq "00" ]; then
+          echo "Using FMP_API_KEY_1"
+          echo "FMP_API_KEY=${{ secrets.FMP_API_KEY_1 }}" >> $GITHUB_ENV
+        elif [ "$hour" -eq "04" ]; then
+          echo "Using FMP_API_KEY_2"
+          echo "FMP_API_KEY=${{ secrets.FMP_API_KEY_2 }}" >> $GITHUB_ENV
+        elif [ "$hour" -eq "08" ]; then
+          echo "Using FMP_API_KEY_3"
+          echo "FMP_API_KEY=${{ secrets.FMP_API_KEY_3 }}" >> $GITHUB_ENV
+        elif [ "$hour" -eq "12" ]; then
+          echo "Using FMP_API_KEY_4"
+          echo "FMP_API_KEY=${{ secrets.FMP_API_KEY_4 }}" >> $GITHUB_ENV
+        elif [ "$hour" -eq "16" ]; then
+          echo "Using FMP_API_KEY_5"
+          echo "FMP_API_KEY=${{ secrets.FMP_API_KEY_5 }}" >> $GITHUB_ENV
+        elif [ "$hour" -eq "20" ]; then
+          echo "Using FMP_API_KEY_6"
+          echo "FMP_API_KEY=${{ secrets.FMP_API_KEY_6 }}" >> $GITHUB_ENV
+        fi
+
     - name: Run data update script
       env:
-        FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        FMP_API_KEY: ${{ env.FMP_API_KEY }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: python scripts/update_data.py

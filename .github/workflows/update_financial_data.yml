@@ -1,0 +1,30 @@
+name: Update Financial Data
+
+on:
+  schedule:
+    - cron: '51 16 * * *'  # Esecuzione ogni giorno alle 2:00 UTC
+  workflow_dispatch:  # Per avviare manualmente se necessario
+
+jobs:
+  update_data:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests PyGithub
+
+    - name: Run data update script
+      env:
+        FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python scripts/update_data.py

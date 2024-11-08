@@ -6,14 +6,19 @@ FMP_API_KEY = os.getenv("FMP_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_NAME = "pammyhouse/dati-finanziari"
 
+
 def fetch_company_profile(symbol):
     response = requests.get(f"https://financialmodelingprep.com/api/v3/profile/{symbol}", params={"apikey": FMP_API_KEY})
     if response.ok:
         profile_data = response.json()
         if profile_data:
             return profile_data[0]
-    print(f"Errore nel recupero del profilo per {symbol}")
-    return None
+    # Se i dati non sono disponibili, restituiamo un dizionario con valori di fallback
+    return {
+        "companyName": "",
+        "description": "",
+        "image": ""
+    
 
 def fetch_stock_data(symbol):
     response = requests.get(f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}", params={"apikey": FMP_API_KEY})

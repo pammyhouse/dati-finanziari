@@ -117,7 +117,7 @@ def predict_growth_probability(model):
 
 def save_to_html(symbol, growth_probability):
     """
-    Salva il risultato in un file HTML.
+    Salva il risultato in un file HTML per il simbolo.
     """
     result_file_path = os.path.join(RESULTS_FOLDER, f"{symbol}_RESULT.htm")
     
@@ -146,7 +146,47 @@ def save_to_html(symbol, growth_probability):
     except Exception as e:
         logging.error(f"Errore nel salvataggio del file HTML per {symbol}: {e}")
 
+def save_classifica_to_html(symbols_with_probabilities):
+    """
+    Crea e salva la classifica dei simboli in un file HTML.
+    """
+    classifica_file_path = os.path.join(RESULTS_FOLDER, "classifica.html")
+    
+    # Contenuto da scrivere nella classifica
+    html_content = """
+    <html>
+        <head>
+            <title>Classifica Probabilità di Crescita</title>
+        </head>
+        <body>
+            <h1>Classifica dei Simboli per Probabilità di Crescita</h1>
+            <table border="1">
+                <tr>
+                    <th>Simbolo</th>
+                    <th>Probabilità</th>
+                </tr>
+    """
+    
+    for symbol, prob in symbols_with_probabilities:
+        html_content += f"<tr><td>{symbol}</td><td>{prob * 100:.2f}%</td></tr>"
+    
+    html_content += """
+            </table>
+        </body>
+    </html>
+    """
+    
+    try:
+        with open(classifica_file_path, "w") as file:
+            file.write(html_content)
+        logging.info(f"Classifica salvata in {classifica_file_path}")
+    
+    except Exception as e:
+        logging.error(f"Errore nel salvataggio della classifica: {e}")
+
 def main():
+    symbols_with_probabilities = []
+    
     for symbol in symbols:
         # Preleva i dati per ogni simbolo
         get_stock_data(symbol)
@@ -161,8 +201,17 @@ def main():
             
             # Salva il risultato in un file HTML
             save_to_html(symbol, growth_probability)
+            
+            # Aggiungi il simbolo e la probabilità alla lista
+            symbols_with_probabilities.append((symbol, growth_probability))
         else:
             logging.warning(f"Dati insufficienti per {symbol}. Saltando...")
+    
+    # Ordina i simboli in base alla probabilità di crescita
+    symbols_with_probabilities.sort(key=lambda x: (-x[1], x[0]))  # Ordinamento per probabilità e simbolo alfabeticamente
+    
+    # Salva la classifica
+    save_classifica_to_html(symbols_with_probabilities)
 
 if __name__ == "__main__":
     main()

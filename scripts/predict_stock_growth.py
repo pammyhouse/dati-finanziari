@@ -9,8 +9,8 @@ import os
 logging.basicConfig(level=logging.DEBUG)
 
 # Parametri modello
-NUM_TREES = 80
-MAX_DEPTH = 8
+NUM_TREES = 150
+MAX_DEPTH = 15
 
 # URL di esempio per simboli finanziari
 SHEET_URL_TEMPLATE = "https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{}.html"

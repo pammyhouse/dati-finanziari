@@ -1,0 +1,33 @@
+name: Esegui codice Python ogni ora
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Esegui ogni ora
+
+jobs:
+  run_python_code:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 scikit-learn
+
+      - name: Run Python script
+        run: python predict_stock_growth.py
+
+      - name: Commit and push results
+        run: |
+          git config --global user.name "Your Name"
+          git config --global user.email "your-email@example.com"
+          git add results/*
+          git commit -m "Aggiornamento risultati analisi"
+          git push

@@ -2,7 +2,7 @@ name: Esegui codice Python ogni ora
 
 on:
   schedule:
-    - cron: '54 * * * *'  # Esegui ogni ora
+    - cron: '15 0,16,20 * * *'  # Esegui il flusso di lavoro alle 00:15, 16:15 e 20:15 ogni giorno
 
 jobs:
   run_python_code:

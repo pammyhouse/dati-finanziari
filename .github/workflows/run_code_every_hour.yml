@@ -22,7 +22,7 @@ jobs:
           pip install requests beautifulsoup4 scikit-learn
 
       - name: Run Python script
-        run: python predict_stock_growth.py
+        run: python scripts/predict_stock_growth.py
 
       - name: Commit and push results
         run: |

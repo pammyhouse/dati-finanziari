@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 import logging
+import os
 
 # Configura il logging per monitorare le operazioni
 logging.basicConfig(level=logging.DEBUG)
@@ -23,10 +24,30 @@ lows = []
 volumes = []
 changes = []
 
+# Lista dei simboli da analizzare
+symbols = ["AAPL", "GOOG", "AMZN", "MSFT"]  # Aggiungi qui i simboli che desideri analizzare
+
+# Percorso della cartella per i risultati
+RESULTS_FOLDER = "results"
+
+# Crea la cartella per i risultati se non esiste
+if not os.path.exists(RESULTS_FOLDER):
+    os.makedirs(RESULTS_FOLDER)
+
 def get_stock_data(symbol):
     """
     Funzione per scaricare e analizzare i dati di un asset dal GitHub.
     """
+    global dates, opens, prices, highs, lows, volumes, changes
+    # Reset delle liste per ogni simbolo
+    dates.clear()
+    opens.clear()
+    prices.clear()
+    highs.clear()
+    lows.clear()
+    volumes.clear()
+    changes.clear()
+
     url = SHEET_URL_TEMPLATE.format(symbol.upper())
     try:
         response = requests.get(url)
@@ -81,22 +102,56 @@ def predict_growth_probability(model):
     """
     last_sample = np.array([[opens[-1], prices[-1], highs[-1], lows[-1], volumes[-1], changes[-1]]])
     growth_probability = model.predict_proba(last_sample)[0][1]
-    logging.info(f"Probabilità di crescita: {growth_probability * 100:.2f}%")
+    return growth_probability
+
+def save_to_html(symbol, growth_probability):
+    """
+    Salva il risultato in un file HTML.
+    """
+    result_file_path = os.path.join(RESULTS_FOLDER, f"{symbol}_RESULT.htm")
+    
+    # Contenuto da scrivere nel file HTML
+    html_content = f"""
+    <html>
+        <head>
+            <title>Risultato per {symbol}</title>
+        </head>
+        <body>
+            <h1>Probabilità di crescita per {symbol}</h1>
+            <p>Probabilità di crescita dell'asset: {growth_probability * 100:.2f}%</p>
+        </body>
+    </html>
+    """
+    
+    try:
+        # Se esiste già un file con lo stesso nome, lo elimina e lo sostituisce
+        if os.path.exists(result_file_path):
+            os.remove(result_file_path)
+        
+        with open(result_file_path, "w") as file:
+            file.write(html_content)
+        logging.info(f"Risultato salvato in {result_file_path}")
+    
+    except Exception as e:
+        logging.error(f"Errore nel salvataggio del file HTML per {symbol}: {e}")
 
 def main():
-    # Esempio: preleva i dati per "AAPL"
-    symbol = "AAPL"
-    get_stock_data(symbol)
-    
-    # Prepara i dati e addestra il modello
-    features, targets = prepare_features_and_targets()
-    if len(features) > 0 and len(targets) > 0:
-        model = train_random_forest(features, targets)
+    for symbol in symbols:
+        # Preleva i dati per ogni simbolo
+        get_stock_data(symbol)
         
-        # Effettua la previsione e mostra la probabilità di crescita
-        predict_growth_probability(model)
-    else:
-        logging.error("Dati insufficienti per l'addestramento.")
+        if len(prices) > 0:
+            # Prepara i dati e addestra il modello
+            features, targets = prepare_features_and_targets()
+            model = train_random_forest(features, targets)
+            
+            # Prevedi la probabilità di crescita
+            growth_probability = predict_growth_probability(model)
+            
+            # Salva il risultato in un file HTML
+            save_to_html(symbol, growth_probability)
+        else:
+            logging.warning(f"Dati insufficienti per {symbol}. Saltando...")
 
 if __name__ == "__main__":
     main()

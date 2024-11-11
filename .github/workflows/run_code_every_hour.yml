@@ -26,8 +26,8 @@ jobs:
 
       - name: Commit and push results
         run: |
-          git config --global user.name "Your Name"
-          git config --global user.email "your-email@example.com"
+          git config --global user.name "pammyhouse"
+          git config --global user.email "pammyhouse298@gmail.com"
           git add results/*
           git commit -m "Aggiornamento risultati analisi"
           git push

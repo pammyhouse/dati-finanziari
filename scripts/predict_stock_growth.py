@@ -1,83 +1,108 @@
 import requests
-import pandas as pd
-import random
-from sklearn.ensemble import RandomForestClassifier
 from bs4 import BeautifulSoup
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 import logging
+import random
 
-# Configura logging per il debug
+# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Parametri del modello
-NUM_TREES = 80
-MAX_DEPTH = 8
+# List of stock symbols
+stock_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ",
+                 "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE", "VZ",
+                 "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD", "IBM", "CRM", "BMY",
+                 "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX", "MDT", "TXN", "MMM", "NEE", "PM", "BA",
+                 "UNH", "MO", "DHR", "SPGI", "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS",
+                 "CVS", "TGT", "ANTM", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI", "DE", "BDX",
+                 "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS", "EURUSD", "USDJPY", "GBPUSD", "AUDUSD",
+                 "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "DASHUSD", "XMRUSD", "ETCUSD", 
+                 "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE",
+                 "ZTS", "TJX", "CL", "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW"]
 
-# Lista di simboli
-STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ", "WMT", "NVDA"]
-
-# Funzione per scaricare i dati dal file HTML di GitHub
+# Define function to fetch stock data
 def get_stock_data(symbol):
     url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{symbol.upper()}.html"
+    
     try:
+        # Fetch the data
         response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        rows = soup.select("table tbody tr")
+        response.raise_for_status()  # Raise an exception if the request was unsuccessful
         
-        # Estrazione dei dati
-        dates, opens, closes, highs, lows, volumes, changes = [], [], [], [], [], [], []
+        # Parse the HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        rows = soup.select('table tbody tr')
         
+        data = []
+        
+        # Process the data rows
         for row in rows:
-            columns = row.select("td")
+            columns = row.find_all('td')
             if len(columns) >= 7:
-                dates.append(columns[0].text)
-                opens.append(float(columns[1].text))
-                closes.append(float(columns[2].text))
-                highs.append(float(columns[3].text))
-                lows.append(float(columns[4].text))
-                volumes.append(float(columns[5].text))
-                changes.append(float(columns[6].text))
+                date = columns[0].text.strip()
+                open_price = float(columns[1].text.strip())
+                close_price = float(columns[2].text.strip())
+                high_price = float(columns[3].text.strip())
+                low_price = float(columns[4].text.strip())
+                volume = float(columns[5].text.strip())
+                change = float(columns[6].text.strip())
+                
+                # Append data to list
+                data.append([date, open_price, close_price, high_price, low_price, volume, change])
         
-        logging.debug(f"Dati scaricati per {symbol}")
-        logging.debug("lastPrice: " + str(closes[-1]) + "firstPrice: " + str(closes[0]))
-        return pd.DataFrame({
-            "Date": dates, "Open": opens, "Close": closes, "High": highs,
-            "Low": lows, "Volume": volumes, "Change": changes
-        })
-
-    except requests.RequestException as e:
-        logging.error(f"Errore nel caricamento del file HTML per {symbol}: {e}")
+        # Return data as DataFrame
+        df = pd.DataFrame(data, columns=['Date', 'Open', 'Close', 'High', 'Low', 'Volume', 'Change'])
+        return df
+        
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching data for {symbol}: {e}")
         return None
 
-# Funzione per addestrare la Random Forest e fare previsioni
-def train_and_predict(data):
-    if len(data) < 2:
-        logging.error("Dati insufficienti per il calcolo.")
-        return
+# Function to log daily data
+def log_daily_data(symbol, df):
+    for _, row in df.iterrows():
+        log_message = f"Symbol: {symbol}, Date: {row['Date']}, Open: {row['Open']}, Close: {row['Close']}, " \
+                      f"High: {row['High']}, Low: {row['Low']}, Volume: {row['Volume']}, Change: {row['Change']}"
+        logging.debug(log_message)
 
-    # Preparazione dei dati
-    features = data[["Open", "Close", "High", "Low", "Volume", "Change"]].values[1:]
-    targets = [1 if data["Close"].iloc[i] > data["Close"].iloc[i - 1] else 0 for i in range(1, len(data))]
+# Train a Random Forest Model
+def train_random_forest(df):
+    # Prepare feature columns and target
+    features = df[['Open', 'Close', 'High', 'Low', 'Volume', 'Change']].values
+    target = (df['Close'] > df['Open']).astype(int)  # 1 if close > open, else 0
     
-    # Addestramento del modello
-    model = RandomForestClassifier(n_estimators=NUM_TREES, max_depth=MAX_DEPTH, random_state=42)
-    model.fit(features, targets)
-    logging.info("Modello addestrato con successo.")
+    # Train-test split
+    X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
+    
+    # Train the Random Forest model
+    model = RandomForestClassifier(n_estimators=80, max_depth=8, random_state=42)
+    model.fit(X_train, y_train)
+    
+    # Evaluate the model
+    accuracy = model.score(X_test, y_test)
+    logging.info(f"Model Accuracy: {accuracy * 100:.2f}%")
+    
+    return model
 
-    # Previsione per il prossimo giorno
-    last_sample = data[["Open", "Close", "High", "Low", "Volume", "Change"]].iloc[-1].values.reshape(1, -1)
-    growth_probability = model.predict_proba(last_sample)[0][1]
-    logging.debug(f"Probabilità di crescita per il prossimo giorno: {growth_probability * 100:.2f}%")
-    return growth_probability * 100
+# Predict stock growth for the next day
+def predict_growth(model, df):
+    last_sample = df.iloc[-1][['Open', 'Close', 'High', 'Low', 'Volume', 'Change']].values
+    growth_probability = model.predict_proba([last_sample])[0][1]  # Probability of class 1 (growth)
+    logging.info(f"Probability of growth: {growth_probability * 100:.2f}%")
+    return growth_probability
 
-# Funzione principale per il workflow GitHub Actions
+# Main function to simulate the workflow
 def main():
-    for symbol in STOCK_SYMBOLS:
-        data = get_stock_data(symbol)
-        if data is not None:
-            growth_probability = train_and_predict(data)
-            logging.info("Previsione per " + str(symbol) + ": " + str(growth_probability) + "% di crescita probabile.")
+    symbol = 'AAPL'  # Example: use AAPL as the stock symbol
+    df = get_stock_data(symbol)
+    
+    if df is not None:
+        log_daily_data(symbol, df)
+        model = train_random_forest(df)
+        growth_probability = predict_growth(model, df)
+        
+        print(f"Prediction for {symbol}: Probability of growth = {growth_probability * 100:.2f}%")
 
-# Entry point del workflow
 if __name__ == "__main__":
     main()

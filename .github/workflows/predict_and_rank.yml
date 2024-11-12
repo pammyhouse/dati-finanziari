@@ -19,6 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install requests
+          pip install os
           pip install beautifulsoup4
           pip install scikit-learn
           pip install numpy

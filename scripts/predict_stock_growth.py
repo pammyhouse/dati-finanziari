@@ -13,42 +13,55 @@ prices = []
 volumes = []
 changes = []
 
-# Funzione per ottenere i dati dal file HTML
+# Funzione per recuperare i dati dal file HTML
 def get_stock_data(symbol):
     url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{symbol.upper()}.html"
     
     try:
-        # Ottieni il contenuto del file HTML
+        # Scarica il contenuto della pagina HTML
         response = requests.get(url)
-        response.raise_for_status()  # Verifica se la richiesta ha avuto successo
-
-        # Usa BeautifulSoup per analizzare l'HTML
+        response.raise_for_status()  # Verifica che la richiesta sia andata a buon fine
+        
+        # Analizza il contenuto HTML
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Seleziona tutte le righe della tabella
-        rows = soup.select('table tbody tr')  # Modifica il selettore in base alla struttura del file HTML
+        # Trova la tabella con i dati
+        table = soup.find('table')  # Trova la prima tabella nella pagina
         
-        # Estrai i dati da ogni riga della tabella
+        # Trova tutte le righe della tabella (tr)
+        rows = table.find_all('tr')[1:]  # Ignora la prima riga, che è l'intestazione
+        
+        # Liste per contenere i dati
+        dates = []
+        opens = []
+        highs = []
+        lows = []
+        prices = []
+        volumes = []
+        changes = []
+        
+        # Itera attraverso ogni riga della tabella
         for row in rows:
-            columns = row.find_all('td')
-            if len(columns) >= 7:  # Assicurati che ci siano almeno 7 colonne
-                date = columns[0].text.strip()
-                open_price = float(columns[1].text.strip())
-                close_price = float(columns[2].text.strip())
-                high_price = float(columns[3].text.strip())
-                low_price = float(columns[4].text.strip())
-                volume = float(columns[5].text.strip())
-                change = float(columns[6].text.strip())
+            cols = row.find_all('td')  # Estrai tutte le celle (td) della riga
+            
+            if len(cols) >= 7:  # Assicurati che ci siano almeno 7 colonne (come previsto)
+                date = cols[0].text.strip()  # Estrai la data
+                open_price = float(cols[1].text.strip())  # Estrai il prezzo di apertura
+                close_price = float(cols[2].text.strip())  # Estrai il prezzo di chiusura
+                high_price = float(cols[3].text.strip())  # Estrai il prezzo massimo
+                low_price = float(cols[4].text.strip())  # Estrai il prezzo minimo
+                volume = float(cols[5].text.strip())  # Estrai il volume
+                change = float(cols[6].text.strip())  # Estrai il cambiamento
                 
-                # Aggiungi i dati alle rispettive liste
+                # Aggiungi i valori alle liste
                 dates.append(date)
                 opens.append(open_price)
-                high.append(high_price)
-                low.append(low_price)
+                highs.append(high_price)
+                lows.append(low_price)
                 prices.append(close_price)
                 volumes.append(volume)
                 changes.append(change)
-        
+
         # Dopo aver caricato i dati, invertiamo l'ordine per processarli dalla più vecchia alla più recente
         reverse_data()
 
@@ -57,9 +70,17 @@ def get_stock_data(symbol):
         
         # Esegui l'operazione con Random Forest
         operator_manager()
-
+        
+        # Verifica se i dati sono stati correttamente estratti
+        print("Dati caricati correttamente:")
+        for i in range(len(dates)):
+            print(f"Data: {dates[i]}, Apertura: {opens[i]}, Chiusura: {prices[i]}, Massimo: {highs[i]}, Minimo: {lows[i]}, Volume: {volumes[i]}, Cambiamento: {changes[i]}")
+        
+        return dates, opens, highs, lows, prices, volumes, changes
+    
     except requests.exceptions.RequestException as e:
-        logging.error(f"Errore nel recupero dei dati: {e}")
+        print(f"Errore durante il recupero dei dati: {e}")
+    
 
 # Funzione per invertire l'ordine dei dati
 def reverse_data():

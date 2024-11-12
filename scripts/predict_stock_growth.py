@@ -7,8 +7,8 @@ import numpy as np
 # Lista per raccogliere i dati finanziari
 dates = []
 opens = []
-high = []
-low = []
+highs = []
+lows = []
 prices = []
 volumes = []
 changes = []
@@ -75,10 +75,10 @@ def get_stock_data(symbol):
 
 # Funzione per invertire l'ordine dei dati
 def reverse_data():
-    global prices, high, low, opens, volumes, changes
+    global prices, highs, lows, opens, volumes, changes
     prices = prices[::-1]
-    high = high[::-1]
-    low = low[::-1]
+    highs = highs[::-1]
+    lows = lows[::-1]
     opens = opens[::-1]
     volumes = volumes[::-1]
     changes = changes[::-1]
@@ -88,8 +88,8 @@ def log_daily_data(symbol):
     for i in range(len(dates)):
         date = dates[i]
         open_price = opens[i]
-        high_price = high[i]
-        low_price = low[i]
+        high_price = highs[i]
+        low_price = lows[i]
         close = prices[i]
         volume = volumes[i]
         change = changes[i]
@@ -109,7 +109,7 @@ def operator_manager():
     
     for i in range(1, len(prices)):
         sample = [
-            opens[i], prices[i], high[i], low[i],
+            opens[i], prices[i], highs[i], lows[i],
             volumes[i], changes[i]
         ]
         features.append(sample)
@@ -121,7 +121,7 @@ def operator_manager():
 
     # Previsione per il prossimo giorno
     last_sample = [
-        opens[-1], prices[-1], high[-1], low[-1],
+        opens[-1], prices[-1], highs[-1], lows[-1],
         volumes[-1], changes[-1]
     ]
     

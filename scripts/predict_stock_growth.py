@@ -82,6 +82,7 @@ def get_stock_data(symbol):
                 changes.append(float(columns[6].text))
         
         logging.info(f"Dati caricati per {symbol}")
+        print(prices)
 
     except Exception as e:
         logging.error(f"Errore nel caricamento del file HTML per {symbol}: {e}")

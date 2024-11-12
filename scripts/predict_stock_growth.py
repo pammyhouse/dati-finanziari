@@ -1,88 +1,65 @@
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
 
-# Dati delle azioni
-prices = []
-opens = []
-high = []
-low = []
-volumes = []
-changes = []
-dates = []
-
-num_trees = 80  # Numero di alberi nella foresta
-max_depth = 8   # Profondità massima per ciascun albero
-
-stock_symbols = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ",
-    "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE", "VZ",
-    "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
-    "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
-    "MDT", "TXN", "MMM", "NEE", "PM", "BA", "UNH", "MO", "DHR", "SPGI",
-    "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
-    "TGT", "ANTM", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI",
-    "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
-    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-    "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD",
-    "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
-    "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW"
-]
-
+# Funzione per recuperare i dati dal file HTML
 def get_stock_data(symbol):
     url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{symbol.upper()}.html"
     
-    # Richiesta HTTP per scaricare il contenuto HTML
     try:
+        # Scarica il contenuto della pagina HTML
         response = requests.get(url)
-        response.raise_for_status()  # Verifica che la richiesta abbia avuto successo
+        response.raise_for_status()  # Verifica che la richiesta sia andata a buon fine
         
-        # Parsing del documento HTML
+        # Analizza il contenuto HTML
         soup = BeautifulSoup(response.text, 'html.parser')
-        rows = soup.select("table tbody tr")  # Selettore per le righe della tabella
         
-        # Estrazione dei dati dalle righe della tabella
+        # Trova la tabella con i dati
+        table = soup.find('table')  # Trova la prima tabella nella pagina
+        
+        # Trova tutte le righe della tabella (tr)
+        rows = table.find_all('tr')[1:]  # Ignora la prima riga, che è l'intestazione
+        
+        # Liste per contenere i dati
+        dates = []
+        opens = []
+        highs = []
+        lows = []
+        prices = []
+        volumes = []
+        changes = []
+        
+        # Itera attraverso ogni riga della tabella
         for row in rows:
-            columns = row.select("td")
-            if len(columns) >= 7:
-                date = columns[0].get_text()
-                open_price = float(columns[1].get_text())
-                close_price = float(columns[2].get_text())
-                high_price = float(columns[3].get_text())
-                low_price = float(columns[4].get_text())
-                volume = float(columns[5].get_text())
-                change = float(columns[6].get_text())
-
-                # Aggiungi i dati alle rispettive liste
+            cols = row.find_all('td')  # Estrai tutte le celle (td) della riga
+            
+            if len(cols) >= 7:  # Assicurati che ci siano almeno 7 colonne (come previsto)
+                date = cols[0].text.strip()  # Estrai la data
+                open_price = float(cols[1].text.strip())  # Estrai il prezzo di apertura
+                close_price = float(cols[2].text.strip())  # Estrai il prezzo di chiusura
+                high_price = float(cols[3].text.strip())  # Estrai il prezzo massimo
+                low_price = float(cols[4].text.strip())  # Estrai il prezzo minimo
+                volume = float(cols[5].text.strip())  # Estrai il volume
+                change = float(cols[6].text.strip())  # Estrai il cambiamento
+                
+                # Aggiungi i valori alle liste
                 dates.append(date)
                 opens.append(open_price)
-                high.append(high_price)
-                low.append(low_price)
+                highs.append(high_price)
+                lows.append(low_price)
                 prices.append(close_price)
                 volumes.append(volume)
                 changes.append(change)
-
-        # Inverti l'ordine delle liste (simile alla funzione Collections.reverse())
-        prices.reverse()
-        high.reverse()
-        low.reverse()
-        opens.reverse()
-        volumes.reverse()
-        changes.reverse()
-
-        print(f"Dati caricati correttamente per {symbol.upper()}")
-
-        # Esegui altre elaborazioni o salvataggi se necessario
-        log_daily_data(symbol.upper())
-
+        
+        # Verifica se i dati sono stati correttamente estratti
+        print("Dati caricati correttamente:")
+        for i in range(len(dates)):
+            print(f"Data: {dates[i]}, Apertura: {opens[i]}, Chiusura: {prices[i]}, Massimo: {highs[i]}, Minimo: {lows[i]}, Volume: {volumes[i]}, Cambiamento: {changes[i]}")
+        
+        return dates, opens, highs, lows, prices, volumes, changes
+    
     except requests.exceptions.RequestException as e:
-        print(f"Errore nel caricamento dei dati per {symbol.upper()}: {e}")
+        print(f"Errore durante il recupero dei dati: {e}")
 
-def log_daily_data(symbol):
-    # Funzione per loggare i dati giornalieri
-    print(f"Log dei dati giornalieri per {symbol}:")
-    for i in range(len(dates)):
-        print(f"{dates[i]} - Open: {opens[i]}, High: {high[i]}, Low: {low[i]}, Close: {prices[i]}, Volume: {volumes[i]}, Change: {changes[i]}")
-
-# Esempio di utilizzo con il primo simbolo
-get_stock_data("AAPL")
+# Esempio di utilizzo della funzione
+symbol = "MSFT"  # Inserisci il simbolo dell'asset
+get_stock_data(symbol)

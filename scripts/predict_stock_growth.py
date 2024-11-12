@@ -31,15 +31,6 @@ def get_stock_data(symbol):
         # Trova tutte le righe della tabella (tr)
         rows = table.find_all('tr')[1:]  # Ignora la prima riga, che è l'intestazione
         
-        # Liste per contenere i dati
-        dates = []
-        opens = []
-        highs = []
-        lows = []
-        prices = []
-        volumes = []
-        changes = []
-        
         # Itera attraverso ogni riga della tabella
         for row in rows:
             cols = row.find_all('td')  # Estrai tutte le celle (td) della riga

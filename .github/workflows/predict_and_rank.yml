@@ -1,24 +1,26 @@
 name: Predict and Rank Stocks
-# Permetti l'esecuzione manuale tramite GitHub Actions
-on:
-  workflow_dispatch:  # Evento che consente l'esecuzione manuale
 
+on:
+  workflow_dispatch:  # Permette di avviare il workflow manualmente
+  
 jobs:
-  process_data:
-    runs-on: ubuntu-latest  # Esegui su un runner Ubuntu
+  run-predict-stock-growth:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2  # Checkout del codice sorgente del repository
+      - name: Check out the repository
+        uses: actions/checkout@v2  # Scarica i file dal repository
 
-      - name: Set up Python environment
-        uses: actions/setup-python@v2  # Imposta Python
+      - name: Set up Python
+        uses: actions/setup-python@v2
         with:
-          python-version: '3.x'  # Sostituisci con la versione desiderata di Python
+          python-version: '3.x'  # Specifica la versione di Python che serve, ad esempio 3.9 o 3.10
 
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 pandas  # Installa le dipendenze necessarie
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt  # Installa le dipendenze da un eventuale file requirements.txt
 
-      - name: Run Python script
-        run: python scripts/predict_stock_growth.py  # Esegui lo script Python (modifica il nome se necessario)
+      - name: Run predict_stock_growth.py script
+        run: |
+          python scripts/predict_stock_growth.py

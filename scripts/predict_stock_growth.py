@@ -39,7 +39,7 @@ def get_stock_data(symbol):
                 changes.append(float(columns[6].text))
         
         logging.debug(f"Dati scaricati per {symbol}")
-        logging.debug("lastPrice: " + str(closes[len(closes)-1]) + "firstPrice: " + str(closes[0]))
+        logging.debug("lastPrice: " + str(closes[-1]) + "firstPrice: " + str(closes[0]))
         return pd.DataFrame({
             "Date": dates, "Open": opens, "Close": closes, "High": highs,
             "Low": lows, "Volume": volumes, "Change": changes

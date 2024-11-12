@@ -1,218 +1,122 @@
+import os
+from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
+import pandas as pd
 import logging
-import os
 
-# Configura il logging per monitorare le operazioni
+# Configurazione di logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Parametri modello
-NUM_TREES = 150
-MAX_DEPTH = 15
+# Definizione del numero di alberi e della profondità massima
+NUM_TREES = 80
+MAX_DEPTH = 8
+STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"]  # Lista dei simboli
 
-# URL di esempio per simboli finanziari
-SHEET_URL_TEMPLATE = "https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{}.html"
-
-# Dati storici
-dates = []
-opens = []
-prices = []
-highs = []
-lows = []
-volumes = []
-changes = []
-
-# Lista dei simboli da analizzare
-symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ",
-        "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO",
-        "PFE", "VZ", "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
-        "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
-        "MDT", "TXN", "MMM", "NEE", "PM", "BA", "UNH", "MO", "DHR", "SPGI",
-        "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
-        "TGT", "ANTM", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI",
-        "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
-        "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-        "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD",
-        "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
-        "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW"]
-
-# Percorso della cartella per i risultati
-RESULTS_FOLDER = "results"
-
-# Crea la cartella per i risultati se non esiste
-if not os.path.exists(RESULTS_FOLDER):
-    os.makedirs(RESULTS_FOLDER)
-
+# Funzione per ottenere dati storici del simbolo da file HTML su GitHub
 def get_stock_data(symbol):
-    """
-    Funzione per scaricare e analizzare i dati di un asset dal GitHub.
-    """
-    global dates, opens, prices, highs, lows, volumes, changes
-    # Reset delle liste per ogni simbolo
-    dates.clear()
-    opens.clear()
-    prices.clear()
-    highs.clear()
-    lows.clear()
-    volumes.clear()
-    changes.clear()
+    url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{symbol}.html"
+    response = requests.get(url)
+    if response.status_code != 200:
+        logging.error(f"Errore nel caricamento del file HTML per {symbol}")
+        return None
 
-    url = SHEET_URL_TEMPLATE.format(symbol.upper())
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        
-        # Analizza l'HTML
-        soup = BeautifulSoup(response.text, "html.parser")
-        rows = soup.select("table tbody tr")
-        
-        # Estrai i dati e aggiungili alle liste
-        for row in rows:
-            columns = row.find_all("td")
-            if len(columns) >= 7:
-                # Parsing dei dati
-                dates.append(columns[0].text)
-                opens.append(float(columns[1].text))
-                prices.append(float(columns[2].text))
-                highs.append(float(columns[3].text))
-                lows.append(float(columns[4].text))
-                volumes.append(float(columns[5].text))
-                changes.append(float(columns[6].text))
-        
-        logging.info(f"Dati caricati per {symbol}")
-        print(prices)
+    # Parsing del contenuto HTML
+    soup = BeautifulSoup(response.content, 'html.parser')
+    rows = soup.select("table tbody tr")
+    
+    # Estrarre i dati nelle liste appropriate
+    dates, opens, highs, lows, closes, volumes, changes = [], [], [], [], [], [], []
+    for row in rows:
+        columns = row.find_all("td")
+        if len(columns) >= 7:
+            dates.append(columns[0].text)
+            opens.append(float(columns[1].text))
+            closes.append(float(columns[2].text))
+            highs.append(float(columns[3].text))
+            lows.append(float(columns[4].text))
+            volumes.append(float(columns[5].text))
+            changes.append(float(columns[6].text))
 
-    except Exception as e:
-        logging.error(f"Errore nel caricamento del file HTML per {symbol}: {e}")
+    return pd.DataFrame({
+        'Date': dates,
+        'Open': opens,
+        'High': highs,
+        'Low': lows,
+        'Close': closes,
+        'Volume': volumes,
+        'Change': changes
+    })
 
-def prepare_features_and_targets():
-    """
-    Prepara i dati per addestrare il modello di Random Forest.
-    """
-    features = []
-    targets = []
-    for i in range(1, len(prices)):
-        feature = [opens[i], prices[i], highs[i], lows[i], volumes[i], changes[i]]
-        features.append(feature)
-        # Il target è 1 se il prezzo aumenta rispetto al giorno precedente, altrimenti 0
-        targets.append(1 if prices[i] > prices[i - 1] else 0)
-    return np.array(features), np.array(targets)
+# Funzione per salvare il risultato della previsione in un file HTML
+def save_prediction_to_html(symbol, prediction):
+    results_dir = Path("results")
+    results_dir.mkdir(exist_ok=True)  # Creare la cartella "results" se non esiste
+    file_path = results_dir / f"{symbol}_RESULT.html"
+    
+    with open(file_path, "w") as f:
+        f.write(f"<html><body><h2>Prediction for {symbol}</h2>")
+        f.write(f"<p>Probabilità di crescita: {prediction:.2f}%</p>")
+        f.write("</body></html>")
+    
+    logging.info(f"Salvato il risultato della previsione per {symbol} in {file_path}")
 
-def train_random_forest(features, targets):
-    """
-    Addestra il modello Random Forest con i dati forniti.
-    """
+# Funzione per calcolare la previsione di crescita del simbolo
+def predict_growth_probability(data):
+    if data is None or len(data) < 2:
+        logging.error("Dati insufficienti per effettuare una previsione.")
+        return None
+
+    # Costruire il dataset di caratteristiche e target
+    features = data[['Open', 'Close', 'High', 'Low', 'Volume', 'Change']].values[1:]
+    targets = (data['Close'].values[1:] > data['Close'].values[:-1]).astype(int)
+    
+    # Addestrare il modello Random Forest
     model = RandomForestClassifier(n_estimators=NUM_TREES, max_depth=MAX_DEPTH, random_state=42)
     model.fit(features, targets)
-    return model
-
-def predict_growth_probability(model):
-    """
-    Prevede la probabilità di crescita dell'asset usando l'ultimo set di dati.
-    """
-    last_sample = np.array([[opens[-1], prices[-1], highs[-1], lows[-1], volumes[-1], changes[-1]]])
-    growth_probability = model.predict_proba(last_sample)[0][1]
+    
+    # Effettuare la previsione per l'ultimo campione
+    last_sample = features[-1].reshape(1, -1)
+    growth_probability = model.predict_proba(last_sample)[0][1] * 100
     return growth_probability
 
-def save_to_html(symbol, growth_probability):
-    """
-    Salva il risultato in un file HTML per il simbolo.
-    """
-    result_file_path = os.path.join(RESULTS_FOLDER, f"{symbol}_RESULT.htm")
+# Funzione per generare il file HTML con la classifica delle previsioni
+def generate_ranking_file(predictions):
+    # Ordinare le previsioni in ordine decrescente, in caso di parità per ordine alfabetico
+    sorted_predictions = sorted(predictions, key=lambda x: (-x[1], x[0]))
     
-    # Contenuto da scrivere nel file HTML
-    html_content = f"""
-    <html>
-        <head>
-            <title>Risultato per {symbol}</title>
-        </head>
-        <body>
-            <h1>Probabilità di crescita per {symbol}</h1>
-            <p>Probabilità di crescita dell'asset: {growth_probability * 100:.2f}%</p>
-        </body>
-    </html>
-    """
+    # Creare il file HTML classifica.html
+    results_dir = Path("results")
+    file_path = results_dir / "classifica.html"
     
-    try:
-        # Se esiste già un file con lo stesso nome, lo elimina e lo sostituisce
-        if os.path.exists(result_file_path):
-            os.remove(result_file_path)
-        
-        with open(result_file_path, "w") as file:
-            file.write(html_content)
-        logging.info(f"Risultato salvato in {result_file_path}")
+    with open(file_path, "w") as f:
+        f.write("<html><body><h2>Classifica delle Previsioni</h2>")
+        f.write("<table border='1'><tr><th>Simbolo</th><th>Probabilità di Crescita (%)</th></tr>")
+        for symbol, prediction in sorted_predictions:
+            f.write(f"<tr><td>{symbol}</td><td>{prediction:.2f}</td></tr>")
+        f.write("</table></body></html>")
     
-    except Exception as e:
-        logging.error(f"Errore nel salvataggio del file HTML per {symbol}: {e}")
+    logging.info(f"Classifica delle previsioni salvata in {file_path}")
 
-def save_classifica_to_html(symbols_with_probabilities):
-    """
-    Crea e salva la classifica dei simboli in un file HTML.
-    """
-    classifica_file_path = os.path.join(RESULTS_FOLDER, "classifica.html")
-    
-    # Contenuto da scrivere nella classifica
-    html_content = """
-    <html>
-        <head>
-            <title>Classifica Probabilità di Crescita</title>
-        </head>
-        <body>
-            <h1>Classifica dei Simboli per Probabilità di Crescita</h1>
-            <table border="1">
-                <tr>
-                    <th>Simbolo</th>
-                    <th>Probabilità</th>
-                </tr>
-    """
-    
-    for symbol, prob in symbols_with_probabilities:
-        html_content += f"<tr><td>{symbol}</td><td>{prob * 100:.2f}%</td></tr>"
-    
-    html_content += """
-            </table>
-        </body>
-    </html>
-    """
-    
-    try:
-        with open(classifica_file_path, "w") as file:
-            file.write(html_content)
-        logging.info(f"Classifica salvata in {classifica_file_path}")
-    
-    except Exception as e:
-        logging.error(f"Errore nel salvataggio della classifica: {e}")
-
+# Funzione principale
 def main():
-    symbols_with_probabilities = []
+    predictions = []  # Lista per memorizzare simboli e le rispettive previsioni
+
+    for symbol in STOCK_SYMBOLS:
+        logging.info(f"Ottenimento dei dati per {symbol}")
+        data = get_stock_data(symbol)
+        if data is not None:
+            growth_probability = predict_growth_probability(data)
+            if growth_probability is not None:
+                save_prediction_to_html(symbol, growth_probability)
+                predictions.append((symbol, growth_probability))  # Aggiungere simbolo e previsione alla lista
+            else:
+                logging.error(f"Impossibile calcolare la probabilità di crescita per {symbol}")
     
-    for symbol in symbols:
-        # Preleva i dati per ogni simbolo
-        get_stock_data(symbol)
-        
-        if len(prices) > 0:
-            # Prepara i dati e addestra il modello
-            features, targets = prepare_features_and_targets()
-            model = train_random_forest(features, targets)
-            
-            # Prevedi la probabilità di crescita
-            growth_probability = predict_growth_probability(model)
-            
-            # Salva il risultato in un file HTML
-            save_to_html(symbol, growth_probability)
-            
-            # Aggiungi il simbolo e la probabilità alla lista
-            symbols_with_probabilities.append((symbol, growth_probability))
-        else:
-            logging.warning(f"Dati insufficienti per {symbol}. Saltando...")
-    
-    # Ordina i simboli in base alla probabilità di crescita
-    symbols_with_probabilities.sort(key=lambda x: (-x[1], x[0]))  # Ordinamento per probabilità e simbolo alfabeticamente
-    
-    # Salva la classifica
-    save_classifica_to_html(symbols_with_probabilities)
+    # Generare il file classifica.html con la classifica delle previsioni
+    generate_ranking_file(predictions)
 
 if __name__ == "__main__":
     main()

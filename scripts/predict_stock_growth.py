@@ -13,6 +13,8 @@ prices = []
 volumes = []
 changes = []
 
+stockSymbols = ["AAPL"]
+
 # Funzione per recuperare i dati dal file HTML
 def get_stock_data(symbol):
     url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{symbol.upper()}.html"
@@ -134,5 +136,5 @@ def operator_manager():
 # Esegui il recupero dei dati per un simbolo specifico
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)  # Configura il logging
-    symbol = "AAPL"  # Cambia simbolo se necessario
-    get_stock_data(symbol)
+    for symbol in stockSymbols:
+        get_stock_data(symbol)

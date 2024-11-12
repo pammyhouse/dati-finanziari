@@ -1,6 +1,5 @@
 name: Predict and Rank Stocks
 
-# Definisce quando eseguire il workflow
 on:
   push:
     branches:
@@ -13,30 +12,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout del repository
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      # Imposta Python
       - name: Setup Python
         uses: actions/setup-python@v2
         with:
           python-version: '3.x'
 
-      # Installa le dipendenze necessarie
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 scikit-learn pandas
 
-      # Esegue lo script Python per le previsioni e la classifica
       - name: Run prediction script
-        run: python scripts/predict_stock_growth.py  # Sostituisci con il nome del tuo script
+        run: python scripts/predict_stock_growth.py  # Assicurati di inserire "scripts/" prima del nome del file
 
-      # Salva i risultati (output) come artefatti, se desiderato
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3  # Usa la nuova versione `v3`
         with:
           name: results
           path: results/

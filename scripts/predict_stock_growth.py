@@ -75,7 +75,7 @@ def main():
         data = get_stock_data(symbol)
         if data is not None:
             growth_probability = train_and_predict(data)
-            logging.info(f"Previsione per {symbol}: {growth_probability:.2f}% di crescita probabile.")
+            logging.info("Previsione per " + symbol + ": " + growth_probability + "% di crescita probabile.")
 
 # Entry point del workflow
 if __name__ == "__main__":

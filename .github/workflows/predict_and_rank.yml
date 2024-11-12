@@ -6,6 +6,7 @@ on:
       - main
   schedule:
     - cron: '15 0,16,20 * * *'  # Esecuzione giornaliera alle 12:00 UTC
+  workflow_dispatch:  # Aggiungi il trigger manuale
 
 jobs:
   predict_and_rank:

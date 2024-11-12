@@ -31,7 +31,7 @@ jobs:
 
       # Esegue lo script Python per le previsioni e la classifica
       - name: Run prediction script
-        run: python predict_stock_growth.py  # Sostituisci con il nome del tuo script
+        run: python scripts/predict_stock_growth.py  # Sostituisci con il nome del tuo script
 
       # Salva i risultati (output) come artefatti, se desiderato
       - name: Upload results

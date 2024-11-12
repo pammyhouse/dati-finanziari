@@ -64,8 +64,8 @@ def get_stock_data(symbol):
         
         # Verifica se i dati sono stati correttamente estratti
         print("Dati caricati correttamente:")
-        for i in range(len(dates)):
-            print(f"Data: {dates[i]}, Apertura: {opens[i]}, Chiusura: {prices[i]}, Massimo: {highs[i]}, Minimo: {lows[i]}, Volume: {volumes[i]}, Cambiamento: {changes[i]}")
+        #for i in range(len(dates)):
+            #print(f"Data: {dates[i]}, Apertura: {opens[i]}, Chiusura: {prices[i]}, Massimo: {highs[i]}, Minimo: {lows[i]}, Volume: {volumes[i]}, Cambiamento: {changes[i]}")
         
         #return dates, opens, highs, lows, prices, volumes, changes
     
@@ -129,7 +129,7 @@ def operator_manager():
     prediction_probability = model.predict_proba([last_sample])[0][1]  # Probabilità di crescita
     
     prediction_text = f"Probabilità di crescita: {prediction_probability * 100:.2f}%"
-    logging.info(prediction_text)
+    logging.debug(prediction_text)
 
 # Esegui il recupero dei dati per un simbolo specifico
 if __name__ == "__main__":

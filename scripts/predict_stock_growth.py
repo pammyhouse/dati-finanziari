@@ -73,7 +73,7 @@ def get_stock_data(symbol):
         #log_daily_data(symbol)
         
         # Esegui l'operazione con Random Forest
-        operator_manager()
+        operator_manager(symbol)
         
         # Verifica se i dati sono stati correttamente estratti
         print("Dati caricati correttamente:")
@@ -111,7 +111,7 @@ def log_daily_data(symbol):
         logging.debug(log_message)
 
 # Funzione che esegue l'operazione di Random Forest
-def operator_manager():
+def operator_manager(symbol):
     if len(prices) < 2:
         logging.error("Dati insufficienti per il calcolo.")
         return
@@ -143,8 +143,35 @@ def operator_manager():
     
     prediction_text = f"Probabilità di crescita: {prediction_probability * 100:.2f}%"
     logging.debug(prediction_text)
+    # Salva la previsione in un file HTML
+    save_prediction_to_file(symbol, prediction_probability)
 
-# Esegui il recupero dei dati per un simbolo specifico
+# Funzione per salvare la previsione in un file HTML
+def save_prediction_to_file(symbol, prediction_probability):
+    # Assicurati che la cartella "results" esista
+    os.makedirs("results", exist_ok=True)
+    
+    # Nome del file in base al simbolo
+    file_path = f"results/{symbol}.RESULT.html"
+    
+    # Contenuto HTML del file
+    html_content = f"""
+    <html>
+    <head><title>Risultato della Previsione - {symbol}</title></head>
+    <body>
+        <h1>Previsione per {symbol}</h1>
+        <p>Probabilità di crescita: {prediction_probability:.2f}%</p>
+    </body>
+    </html>
+    """
+    
+    # Scrivi il contenuto nel file, sovrascrivendo se esiste già
+    with open(file_path, "w") as file:
+        file.write(html_content)
+    
+    print(f"Previsione salvata in {file_path}")
+
+# Esegui il recupero dei dati per ogni simbolo nella lista stockSymbols
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)  # Configura il logging
     for symbol in stockSymbols:

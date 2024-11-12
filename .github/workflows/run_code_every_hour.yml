@@ -1,33 +1,42 @@
-name: Esegui codice Python ogni ora
+name: Predict and Rank Stocks
 
+# Definisce quando eseguire il workflow
 on:
+  push:
+    branches:
+      - main
   schedule:
-    - cron: '15 0,16,20 * * *'  # Esegui il flusso di lavoro alle 00:15, 16:15 e 20:15 ogni giorno
+    - cron: '15 0,16,20 * * *'  # Esecuzione giornaliera alle 12:00 UTC
 
 jobs:
-  run_python_code:
+  predict_and_rank:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout del repository
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Set up Python
+      # Imposta Python
+      - name: Setup Python
         uses: actions/setup-python@v2
         with:
           python-version: '3.x'
 
+      # Installa le dipendenze necessarie
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 scikit-learn
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 scikit-learn pandas
 
-      - name: Run Python script
-        run: python scripts/predict_stock_growth.py
+      # Esegue lo script Python per le previsioni e la classifica
+      - name: Run prediction script
+        run: python predict_stock_growth.py  # Sostituisci con il nome del tuo script
 
-      - name: Commit and push results
-        run: |
-          git config --global user.name "pammyhouse"
-          git config --global user.email "pammyhouse298@gmail.com"
-          git add results/*
-          git commit -m "Aggiornamento risultati analisi"
-          git push
+      # Salva i risultati (output) come artefatti, se desiderato
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v2
+        with:
+          name: results
+          path: results/

@@ -61,5 +61,5 @@ def get_stock_data(symbol):
         print(f"Errore durante il recupero dei dati: {e}")
 
 # Esempio di utilizzo della funzione
-symbol = "MSFT"  # Inserisci il simbolo dell'asset
+symbol = "TROW"  # Inserisci il simbolo dell'asset
 get_stock_data(symbol)

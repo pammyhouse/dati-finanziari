@@ -31,7 +31,7 @@ def get_stock_data(symbol):
     dates, opens, highs, lows, closes, volumes, changes = [], [], [], [], [], [], []
     for row in rows:
         columns = row.find_all("td")
-        if len(columns) >= 7:
+        if len(columns) >= 6:
             dates.append(columns[0].text)
             opens.append(float(columns[1].text))
             closes.append(float(columns[2].text))

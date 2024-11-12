@@ -5,33 +5,26 @@ on:
     branches:
       - main
   schedule:
-    - cron: '15 0,16,20 * * *'  # Esecuzione giornaliera alle 12:00 UTC
+    - cron: '5 17 * * *'  # Esecuzione giornaliera alle 12:00 UTC
   workflow_dispatch:  # Aggiungi il trigger manuale
 
-jobs:
-  predict_and_rank:
-    runs-on: ubuntu-latest
 
+jobs:
+  data_analysis:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v2
         with:
-          python-version: '3.x'
+          python-version: '3.9'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 scikit-learn pandas
+          pip install requests pandas scikit-learn beautifulsoup4
 
-      - name: Run prediction script
+      - name: Run finance analysis
         run: python scripts/predict_stock_growth.py  # Assicurati di inserire "scripts/" prima del nome del file
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v3  # Usa la nuova versione `v3`
-        with:
-          name: results
-          path: results/

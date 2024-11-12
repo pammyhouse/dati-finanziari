@@ -15,12 +15,14 @@ jobs:
         uses: actions/setup-python@v2
         with:
           python-version: '3.x'  # Specifica la versione di Python che serve, ad esempio 3.9 o 3.10
-
+      # Installa le dipendenze necessarie
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt  # Installa le dipendenze da un eventuale file requirements.txt
-
+          pip install requests
+          pip install beautifulsoup4
+          pip install scikit-learn
+          pip install numpy
+          
       - name: Run predict_stock_growth.py script
         run: |
           python scripts/predict_stock_growth.py

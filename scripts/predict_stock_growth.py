@@ -67,7 +67,7 @@ def get_stock_data(symbol):
         for i in range(len(dates)):
             print(f"Data: {dates[i]}, Apertura: {opens[i]}, Chiusura: {prices[i]}, Massimo: {highs[i]}, Minimo: {lows[i]}, Volume: {volumes[i]}, Cambiamento: {changes[i]}")
         
-        return dates, opens, highs, lows, prices, volumes, changes
+        #return dates, opens, highs, lows, prices, volumes, changes
     
     except requests.exceptions.RequestException as e:
         print(f"Errore durante il recupero dei dati: {e}")

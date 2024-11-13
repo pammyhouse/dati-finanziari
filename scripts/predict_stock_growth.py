@@ -155,7 +155,7 @@ def operator_manager(symbol):
     # Salva la previsione in un file HTML
     github = Github(GITHUB_TOKEN)
     repo = github.get_repo(REPO_NAME)
-    upload_prediction_html(repo, symbol, round(probability * 100, 2))
+    upload_prediction_html(repo, symbol, round(prediction_probability * 100, 2))
 
 # Funzione per caricare e classificare tutte le probabilità
 def create_classification_file():

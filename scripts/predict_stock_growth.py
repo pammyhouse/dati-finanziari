@@ -4,7 +4,8 @@ from bs4 import BeautifulSoup
 import logging
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
-from github import Github
+from github import Github, GithubException
+
 
 # Lista per raccogliere i dati finanziari
 dates = []
@@ -153,7 +154,7 @@ def operator_manager(symbol):
 
 # Funzione per salvare la previsione in un file HTML
 def save_prediction_to_file(symbol, probability):
-    # Verifica il percorso completo, includendo la cartella "results/"
+    # Definisci il percorso completo del file, inclusa la cartella "results/"
     file_path = f"results/{symbol.upper()}_RESULT.html"
     github = Github(GITHUB_TOKEN)
     repo = github.get_repo("pammyhouse/dati-finanziari")
@@ -176,7 +177,7 @@ def save_prediction_to_file(symbol, probability):
         # Se il file esiste, lo aggiorna
         repo.update_file(contents.path, f"Updated result for {symbol}", html_content, contents.sha)
         print(f"File {file_path} aggiornato con successo.")
-    except github.GithubException as e:
+    except GithubException as e:
         if e.status == 404:
             # Se il file non esiste, lo crea
             repo.create_file(file_path, f"Created result for {symbol}", html_content)

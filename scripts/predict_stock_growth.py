@@ -6,10 +6,9 @@ from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 from github import Github, GithubException
 
-# Creazione del repository GitHub usando il token
-
-g = Github(os.getenv("GITHUB_TOKEN"))
-repo = g.get_repo("pammyhouse/dati-finanziari")
+FMP_API_KEY = os.getenv("FMP_API_KEY")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO_NAME = "pammyhouse/dati-finanziari"
 
 # Lista per raccogliere i dati finanziari
 dates = []
@@ -152,35 +151,29 @@ def operator_manager(symbol):
     prediction_text = f"Probabilità di crescita: {prediction_probability * 100:.2f}%"
     logging.debug(prediction_text)
     # Salva la previsione in un file HTML
+    github = Github(GITHUB_TOKEN)
+    repo = github.get_repo(REPO_NAME)
     upload_prediction_html(repo, symbol, prediction_probability)
 
 # Funzione per salvare la previsione in un file HTML
 def upload_prediction_html(repo, symbol, probability):
-    # Specifica il percorso nella cartella results del repository
-    file_path = f"aapl.RESULT.html"
-    
-    # Contenuto HTML del file di previsione
-    html_content = f"""
-    <html>
-        <head><title>Prediction Result for {symbol}</title></head>
-        <body>
-            <h1>Prediction Result for {symbol}</h1>
-            <p>Prediction: {"Growth" if probability >= 51 else "Decline"}</p>
-            <p>Probability of Growth: {probability * 100:.2f}%</p>
-        </body>
-    </html>
-    """
-    
+    file_path = f"results/{symbol.upper()}_RESULT.html"
+
+    html_content = []
+    html_content.append(f"<html><head><title>Previsione per {symbol}</title></head><body>")
+    html_content.append(f"<h1>Previsione per: ({symbol})</h1>")
+
+    html_content.append("<table border='1'><tr><th>Probability</th></tr>")
+    html_content.append("<tr>")
+    html_content.append(f"<td>{probability}</td>")
+    html_content.append("</table></body></html>")
+        
     try:
-        # Tenta di ottenere il contenuto del file per vedere se esiste
         contents = repo.get_contents(file_path)
-        # Se il file esiste, lo aggiorna
-        repo.update_file(contents.path, f"Updated prediction for {symbol}", html_content, contents.sha)
-        logging.info(f"Updated prediction for {symbol} in {file_path}")
+        repo.update_file(contents.path, f"Updated probability for {symbol}", "\n".join(html_content), contents.sha)
     except Exception as e:
-        # Se il file non esiste, lo crea
-        repo.create_file(file_path, f"Created prediction for {symbol}", html_content)
-        logging.info(f"Created prediction for {symbol} in {file_path}")
+        # Se il file non esiste, lo creiamo
+        repo.create_file(file_path, f"Created probability for {symbol}", "\n".join(html_content))
 
 # Esegui il recupero dei dati per ogni simbolo nella lista stockSymbols
 if __name__ == "__main__":

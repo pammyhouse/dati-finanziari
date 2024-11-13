@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import logging
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
+from github import Github
 
 # Lista per raccogliere i dati finanziari
 dates = []

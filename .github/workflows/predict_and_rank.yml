@@ -1,6 +1,8 @@
 name: Predict and Rank Stocks
 
 on:
+  schedule:
+    - cron: '13 19 * * *'  # Esegue alle 19:13 UTC ogni giorno
   workflow_dispatch:  # Permette di eseguire il workflow manualmente
 
 jobs:

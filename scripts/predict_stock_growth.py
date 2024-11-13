@@ -149,10 +149,9 @@ def operator_manager(symbol):
 
 # Funzione per salvare la previsione in un file HTML
 def save_prediction_to_file(symbol, probability):
-    results_dir = "results"
-    os.makedirs(results_dir, exist_ok=True)  # Crea la directory se non esiste
-    
-    file_path = os.path.join(results_dir, f"{symbol}.RESULT.html")
+    file_path = f"results/{symbol.upper()}_RESULT.html"
+    repo = ""
+
     html_content = f"""
     <html>
         <head><title>Prediction Result for {symbol}</title></head>
@@ -163,10 +162,12 @@ def save_prediction_to_file(symbol, probability):
         </body>
     </html>
     """
-    
-    with open(file_path, "w") as file:
-        file.write(html_content)
-    logging.info(f"Saved prediction for {symbol} to {file_path}")
+    try:
+        contents = repo.get_contents(file_path)
+        repo.update_file(contents.path, f"Updated result for {symbol}", html_content, contents.sha)
+    except Exception as e:
+        # Se il file non esiste, lo creiamo
+        repo.create_file(file_path, f"Created data for {symbol}", html_content)
 
 # Esegui il recupero dei dati per ogni simbolo nella lista stockSymbols
 if __name__ == "__main__":

@@ -1,29 +1,28 @@
 name: Predict and Rank Stocks
 
 on:
-  workflow_dispatch:  # Permette di avviare il workflow manualmente
-  
+  workflow_dispatch:  # Permette di eseguire il workflow manualmente
+
 jobs:
-  run-predict-stock-growth:
+  build-and-run:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out the repository
-        uses: actions/checkout@v2  # Scarica i file dal repository
+    - name: Checkout repository
+      uses: actions/checkout@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v2
-        with:
-          python-version: '3.x'  # Specifica la versione di Python che serve, ad esempio 3.9 o 3.10
-      # Installa le dipendenze necessarie
-      - name: Install dependencies
-        run: |
-          pip install requests
-          pip install beautifulsoup4
-          pip install scikit-learn
-          pip install numpy
-          pip install requests PyGithub
-          
-      - name: Run predict_stock_growth.py script
-        run: |
-          python scripts/predict_stock_growth.py
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 scikit-learn PyGithub
+
+    - name: Run prediction script
+      env:
+        FMP_API_KEY: ${{ secrets.FMP_API_KEY }}   # Assicurati di aver aggiunto la chiave API nei segreti del repo
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Token GitHub con permessi di scrittura sul repository
+      run: python scripts/predict_stock_growth.py

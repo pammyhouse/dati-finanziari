@@ -148,29 +148,25 @@ def operator_manager(symbol):
     save_prediction_to_file(symbol, prediction_probability)
 
 # Funzione per salvare la previsione in un file HTML
-def save_prediction_to_file(symbol, prediction_probability):
-    # Assicurati che la cartella "results" esista
-    os.makedirs("results", exist_ok=True)
+def save_prediction_to_file(symbol, prediction, probability):
+    results_dir = "results"
+    os.makedirs(results_dir, exist_ok=True)  # Crea la directory se non esiste
     
-    # Nome del file in base al simbolo
-    file_path = f"results/{symbol}.RESULT.html"
-    
-    # Contenuto HTML del file
+    file_path = os.path.join(results_dir, f"{symbol}.RESULT.html")
     html_content = f"""
     <html>
-    <head><title>Risultato della Previsione - {symbol}</title></head>
-    <body>
-        <h1>Previsione per {symbol}</h1>
-        <p>Probabilità di crescita: {prediction_probability:.2f}%</p>
-    </body>
+        <head><title>Prediction Result for {symbol}</title></head>
+        <body>
+            <h1>Prediction Result for {symbol}</h1>
+            <p>Prediction: {"Growth" if prediction == 1 else "Decline"}</p>
+            <p>Probability of Growth: {probability * 100:.2f}%</p>
+        </body>
     </html>
     """
     
-    # Scrivi il contenuto nel file, sovrascrivendo se esiste già
     with open(file_path, "w") as file:
         file.write(html_content)
-    
-    print(f"Previsione salvata in {file_path}")
+    logging.info(f"Saved prediction for {symbol} to {file_path}")
 
 # Esegui il recupero dei dati per ogni simbolo nella lista stockSymbols
 if __name__ == "__main__":

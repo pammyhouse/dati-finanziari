@@ -11,11 +11,6 @@ from github import Github, GithubException
 g = Github(os.getenv("GITHUB_TOKEN"))
 repo = g.get_repo("pammyhouse/dati-finanziari")
 
-# Esegui l'upload per ogni simbolo
-for symbol in stockSymbols:
-    prediction, probability = get_prediction(symbol)  # Supponiamo che questa funzione ritorni i risultati della previsione
-    upload_prediction_html(repo, symbol, prediction, probability)
-
 # Lista per raccogliere i dati finanziari
 dates = []
 opens = []

@@ -176,3 +176,10 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)  # Configura il logging
     for symbol in stockSymbols:
         get_stock_data(symbol)
+        dates = []
+        opens = []
+        highs = []
+        lows = []
+        prices = []
+        volumes = []
+        changes = []

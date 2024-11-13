@@ -19,6 +19,8 @@ prices = []
 volumes = []
 changes = []
 
+# Lista globale per memorizzare le probabilità di ciascun simbolo
+symbol_probabilities = []
 
 stockSymbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ",
         "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO",
@@ -155,8 +157,43 @@ def operator_manager(symbol):
     repo = github.get_repo(REPO_NAME)
     upload_prediction_html(repo, symbol, prediction_probability * 100:.2f)
 
-# Funzione per salvare la previsione in un file HTML
+# Funzione per caricare e classificare tutte le probabilità
+def create_classification_file():
+    # Ordina la lista di simboli per probabilità (decrescente) e per nome (alfabetico) in caso di probabilità uguali
+    sorted_symbols = sorted(symbol_probabilities, key=lambda x: (-x[1], x[0]))
+
+    # Crea il contenuto del file HTML
+    html_content = []
+    html_content.append("<html><head><title>Classifica dei Simboli</title></head><body>")
+    html_content.append("<h1>Classifica dei Simboli in Base alla Probabilità di Crescita</h1>")
+    html_content.append("<table border='1'><tr><th>Simbolo</th><th>Probabilità</th></tr>")
+    
+    # Aggiungi ogni simbolo e la sua probabilità alla tabella HTML
+    for symbol, probability in sorted_symbols:
+        html_content.append(f"<tr><td>{symbol}</td><td>{probability * 100:.2f}%</td></tr>")
+    
+    html_content.append("</table></body></html>")
+
+    # Salva il file HTML nella cartella 'results'
+    file_path = "results/classifica.html"
+    
+    # Salva il file su GitHub
+    github = Github(GITHUB_TOKEN)
+    repo = github.get_repo(REPO_NAME)
+    try:
+        contents = repo.get_contents(file_path)
+        repo.update_file(contents.path, "Updated classification", "\n".join(html_content), contents.sha)
+    except GithubException:
+        # Se il file non esiste, creiamo un nuovo file
+        repo.create_file(file_path, "Created classification", "\n".join(html_content))
+    
+    print("Classifica aggiornata con successo!")
+
+# Funzione per salvare la previsione in un file HTML (modificata per registrare la probabilità)
 def upload_prediction_html(repo, symbol, probability):
+    # Aggiungi la probabilità al dizionario delle probabilità
+    symbol_probabilities.append((symbol, probability))
+
     file_path = f"results/{symbol.upper()}_RESULT.html"
 
     html_content = []
@@ -175,7 +212,7 @@ def upload_prediction_html(repo, symbol, probability):
         # Se il file non esiste, lo creiamo
         repo.create_file(file_path, f"Created probability for {symbol}", "\n".join(html_content))
 
-# Esegui il recupero dei dati per ogni simbolo nella lista stockSymbols
+# Funzione principale che carica i dati e esegue le operazioni per ogni simbolo
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)  # Configura il logging
     for symbol in stockSymbols:
@@ -187,3 +224,6 @@ if __name__ == "__main__":
         prices = []
         volumes = []
         changes = []
+
+    # Dopo aver completato il processo per tutti i simboli, creiamo la classifica
+    create_classification_file()

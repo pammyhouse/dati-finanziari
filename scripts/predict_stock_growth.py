@@ -157,7 +157,7 @@ def operator_manager(symbol):
 # Funzione per salvare la previsione in un file HTML
 def upload_prediction_html(repo, symbol, probability):
     # Specifica il percorso nella cartella results del repository
-    file_path = f"results/{symbol}.RESULT.html"
+    file_path = f"aapl.RESULT.html"
     
     # Contenuto HTML del file di previsione
     html_content = f"""

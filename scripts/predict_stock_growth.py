@@ -138,7 +138,7 @@ def operator_manager(symbol):
         targets.append(1 if prices[i] > prices[i - 1] else 0)
     
     # Addestramento del modello Random Forest
-    model = RandomForestClassifier(n_estimators=80, max_depth=8)
+    model = RandomForestClassifier(n_estimators=200, max_depth=15)
     model.fit(features, targets)
 
     # Previsione per il prossimo giorno

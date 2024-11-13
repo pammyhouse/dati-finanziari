@@ -148,7 +148,7 @@ def operator_manager(symbol):
     save_prediction_to_file(symbol, prediction_probability)
 
 # Funzione per salvare la previsione in un file HTML
-def save_prediction_to_file(symbol, prediction, probability):
+def save_prediction_to_file(symbol, probability):
     results_dir = "results"
     os.makedirs(results_dir, exist_ok=True)  # Crea la directory se non esiste
     
@@ -158,7 +158,7 @@ def save_prediction_to_file(symbol, prediction, probability):
         <head><title>Prediction Result for {symbol}</title></head>
         <body>
             <h1>Prediction Result for {symbol}</h1>
-            <p>Prediction: {"Growth" if prediction == 1 else "Decline"}</p>
+            <p>Prediction: {"Growth" if probability >= 50 else "Decline"}</p>
             <p>Probability of Growth: {probability * 100:.2f}%</p>
         </body>
     </html>

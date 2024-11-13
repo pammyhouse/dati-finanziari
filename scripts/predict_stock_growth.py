@@ -14,6 +14,7 @@ prices = []
 volumes = []
 changes = []
 
+
 stockSymbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ",
         "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO",
         "PFE", "VZ", "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
@@ -150,7 +151,7 @@ def operator_manager(symbol):
 # Funzione per salvare la previsione in un file HTML
 def save_prediction_to_file(symbol, probability):
     file_path = f"results/{symbol.upper()}_RESULT.html"
-    repo = ""
+    repo = github.getRepo("pammyhouse/dati-finanziari")
 
     html_content = f"""
     <html>

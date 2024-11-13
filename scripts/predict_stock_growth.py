@@ -151,7 +151,7 @@ def operator_manager(symbol):
 # Funzione per salvare la previsione in un file HTML
 def save_prediction_to_file(symbol, probability):
     file_path = f"results/{symbol.upper()}_RESULT.html"
-    repo = github.getRepo("pammyhouse/dati-finanziari")
+    repo = github.get_repo("pammyhouse/dati-finanziari")
 
     html_content = f"""
     <html>

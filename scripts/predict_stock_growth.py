@@ -153,26 +153,38 @@ def operator_manager(symbol):
 
 # Funzione per salvare la previsione in un file HTML
 def save_prediction_to_file(symbol, probability):
+    # Verifica il percorso completo, includendo la cartella "results/"
     file_path = f"results/{symbol.upper()}_RESULT.html"
     github = Github(GITHUB_TOKEN)
     repo = github.get_repo("pammyhouse/dati-finanziari")
 
+    # Contenuto del file HTML
     html_content = f"""
     <html>
         <head><title>Prediction Result for {symbol}</title></head>
         <body>
             <h1>Prediction Result for {symbol}</h1>
-            <p>Prediction: {"Growth" if probability >= 50 else "Decline"}</p>
+            <p>Prediction: {"Growth" if probability >= 0.5 else "Decline"}</p>
             <p>Probability of Growth: {probability * 100:.2f}%</p>
         </body>
     </html>
     """
+
     try:
+        # Prova a ottenere il contenuto del file
         contents = repo.get_contents(file_path)
+        # Se il file esiste, lo aggiorna
         repo.update_file(contents.path, f"Updated result for {symbol}", html_content, contents.sha)
-    except Exception as e:
-        # Se il file non esiste, lo creiamo
-        repo.create_file(file_path, f"Created data for {symbol}", html_content)
+        print(f"File {file_path} aggiornato con successo.")
+    except github.GithubException as e:
+        if e.status == 404:
+            # Se il file non esiste, lo crea
+            repo.create_file(file_path, f"Created result for {symbol}", html_content)
+            print(f"File {file_path} creato con successo.")
+        else:
+            # Gestisce altri errori di GitHub
+            print(f"Errore durante la gestione del file {file_path}: {e}")
+            raise
 
 # Esegui il recupero dei dati per ogni simbolo nella lista stockSymbols
 if __name__ == "__main__":

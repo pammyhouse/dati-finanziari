@@ -153,7 +153,7 @@ def operator_manager(symbol):
     # Salva la previsione in un file HTML
     github = Github(GITHUB_TOKEN)
     repo = github.get_repo(REPO_NAME)
-    upload_prediction_html(repo, symbol, prediction_probability)
+    upload_prediction_html(repo, symbol, prediction_probability * 100:.2f)
 
 # Funzione per salvare la previsione in un file HTML
 def upload_prediction_html(repo, symbol, probability):

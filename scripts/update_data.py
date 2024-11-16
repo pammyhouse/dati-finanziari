@@ -68,18 +68,31 @@ def main():
     github = Github(GITHUB_TOKEN)
     repo = github.get_repo(REPO_NAME)
 
-    stock_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "BRK.A", "V", "JPM", "JNJ",
-        "WMT", "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO",
-        "PFE", "VZ", "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
-        "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
-        "MDT", "TXN", "MMM", "NEE", "PM", "BA", "UNH", "MO", "DHR", "SPGI",
-        "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
-        "TGT", "ANTM", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI",
-        "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
-        "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-        "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD",
-        "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
-        "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW"]
+    stock_symbols = [Quanti elementi ci sono in questo array? String[] assetSymbols = {
+            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JNJ", "WMT",
+            "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE",
+            "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
+            "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
+            #"MDT", "TXN", "MMM", "NEE", "PM", "BA", "UNH", "MO", "DHR", "SPGI",
+            "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
+            #"TGT", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI", "VZ",
+            "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
+            "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
+            "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW", #Solo più 80
+            #"LNTH", "HE", "BTDR", "NAAS", "SCHL", #105
+
+            "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
+            "AUDJPY", "CADJPY", "CHFJPY", "EURAUD", "EURNZD", "EURCAD", "EURCHF", "GBPCHF", "GBPJPY", "AUDCAD",
+            "AUDNZD", "AUDCHF", "CADCHF", "NZDJPY", "NZDCAD", "NZDCHF", "USDSGD", "USDHKD", "USDMXN", "USDZAR", #30
+
+            "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD", "BCHUSD", "EOSUSD", "XLMUSD", "ADAUSD", "TRXUSD", "NEOUSD",
+            "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "LINKUSD", "ATOMUSD", "XTZUSD",
+            "VETUSD", "THETAUSD", "ONTUSD", "OMGUSD", "QTUMUSD", "ZRXUSD", "BATUSD", "DGBUSD", "KNCUSD", "MKRUSD", #30
+
+            "GCUSD", "SI", "CL", "NG", "HG", "ZS", "LE", "HE",
+            "CTUSX", "KC", "CC", "SB", "LB", "OJUSX", "PL", "PAUSD",
+            "MB", "RBUSD", "NG", "BRN", "BRT", "CORN", "SOI" #23
+    };]
     
     for symbol in stock_symbols:
         company_profile = fetch_company_profile(symbol)

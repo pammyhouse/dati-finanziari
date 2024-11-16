@@ -20,8 +20,7 @@ stock_symbols = [
         "AUDJPY", "CADJPY", "CHFJPY", "EURAUD", "EURNZD", "EURCAD", "EURCHF", "GBPCHF", "GBPJPY", "AUDCAD",
         "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD", "BCHUSD", "EOSUSD", "XLMUSD", "ADAUSD", "TRXUSD", "NEOUSD",
         "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "LINKUSD", "ATOMUSD", "XTZUSD",
-        "GCUSD", "SI", "CL", "NG", "HG", "ZS", "LE", "HE", "CTUSX", "KC", "CC", "SB", "LB", "OJUSX", "PL", "PAUSD",
-        "MB", "RBUSD", "NG", "BRN", "BRT", "CORN", "SOI"
+        "CCUSD", "XAUUSD", "XAGUSD", "GCUSD", "ZSUSX", "CTUSX", "ZCUSX", "OJUSX", "RBUSD"
     ]
 
     only_actions = [

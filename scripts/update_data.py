@@ -6,12 +6,44 @@ FMP_API_KEY = os.getenv("FMP_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_NAME = "pammyhouse/dati-finanziari"
 
+stock_symbols = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JNJ", "WMT",
+        "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE",
+        "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
+        "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
+        "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
+        "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
+        "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
+        "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW", 
+        "LNTH", "HE", "BTDR", "NAAS", "SCHL",
+        "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
+        "AUDJPY", "CADJPY", "CHFJPY", "EURAUD", "EURNZD", "EURCAD", "EURCHF", "GBPCHF", "GBPJPY", "AUDCAD",
+        "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD", "BCHUSD", "EOSUSD", "XLMUSD", "ADAUSD", "TRXUSD", "NEOUSD",
+        "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "LINKUSD", "ATOMUSD", "XTZUSD",
+        "GCUSD", "SI", "CL", "NG", "HG", "ZS", "LE", "HE", "CTUSX", "KC", "CC", "SB", "LB", "OJUSX", "PL", "PAUSD",
+        "MB", "RBUSD", "NG", "BRN", "BRT", "CORN", "SOI"
+    ]
+
+    only_actions = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JNJ", "WMT",
+        "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE",
+        "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
+        "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
+        "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
+        "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
+        "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
+        "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW",
+        "LNTH", "HE", "BTDR", "NAAS", "SCHL"
+    ]
+
 def fetch_company_profile(symbol):
-    response = requests.get(f"https://financialmodelingprep.com/api/v3/profile/{symbol}", params={"apikey": FMP_API_KEY})
-    if response.ok:
-        profile_data = response.json()
-        if profile_data:
-            return profile_data[0]
+    # Recupera i dati della compagnia solo per i simboli in only_actions
+    if symbol in only_actions:
+        response = requests.get(f"https://financialmodelingprep.com/api/v3/profile/{symbol}", params={"apikey": FMP_API_KEY})
+        if response.ok:
+            profile_data = response.json()
+            if profile_data:
+                return profile_data[0]
     return {
         "companyName": "",
         "description": "",
@@ -68,41 +100,10 @@ def main():
     github = Github(GITHUB_TOKEN)
     repo = github.get_repo(REPO_NAME)
 
-    stock_symbols = [Quanti elementi ci sono in questo array? String[] assetSymbols = {
-            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JNJ", "WMT",
-            "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE",
-            "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
-            "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
-            #"MDT", "TXN", "MMM", "NEE", "PM", "BA", "UNH", "MO", "DHR", "SPGI",
-            "CAT", "LOW", "MS", "GS", "AXP", "INTU", "AMGN", "GE", "FIS", "CVS",
-            #"TGT", "SYK", "BKNG", "MDLZ", "BLK", "DUK", "USB", "ISRG", "CI", "VZ",
-            "DE", "BDX", "NOW", "SCHW", "LMT", "ADP", "C", "PLD", "NSC", "TMUS",
-            "ITW", "FDX", "PNC", "SO", "APD", "ADI", "ICE", "ZTS", "TJX", "CL",
-            "MMC", "EL", "GM", "CME", "EW", "AON", "D", "PSA", "AEP", "TROW", #Solo più 80
-            #"LNTH", "HE", "BTDR", "NAAS", "SCHL", #105
-
-            "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-            "AUDJPY", "CADJPY", "CHFJPY", "EURAUD", "EURNZD", "EURCAD", "EURCHF", "GBPCHF", "GBPJPY", "AUDCAD",
-            "AUDNZD", "AUDCHF", "CADCHF", "NZDJPY", "NZDCAD", "NZDCHF", "USDSGD", "USDHKD", "USDMXN", "USDZAR", #30
-
-            "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD", "BCHUSD", "EOSUSD", "XLMUSD", "ADAUSD", "TRXUSD", "NEOUSD",
-            "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "LINKUSD", "ATOMUSD", "XTZUSD",
-            "VETUSD", "THETAUSD", "ONTUSD", "OMGUSD", "QTUMUSD", "ZRXUSD", "BATUSD", "DGBUSD", "KNCUSD", "MKRUSD", #30
-
-            "GCUSD", "SI", "CL", "NG", "HG", "ZS", "LE", "HE",
-            "CTUSX", "KC", "CC", "SB", "LB", "OJUSX", "PL", "PAUSD",
-            "MB", "RBUSD", "NG", "BRN", "BRT", "CORN", "SOI" #23
-    };]
-    
     for symbol in stock_symbols:
         company_profile = fetch_company_profile(symbol)
-        if not company_profile:
-            continue
-
         stock_data = fetch_stock_data(symbol)
-        if not stock_data:
-            continue
-
+        
         html_content = generate_html(symbol, company_profile, stock_data)
 
         upload_html_file(repo, symbol, html_content)

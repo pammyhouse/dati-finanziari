@@ -2,24 +2,25 @@ import os
 import requests
 from bs4 import BeautifulSoup
 import logging
+from xgboost import XGBClassifier  # Import XGBoost
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from sklearn.preprocessing import MinMaxScaler
-from joblib import Parallel, delayed
 from github import Github, GithubException
 
-# Configura TensorFlow per usare la GPU (se disponibile)
-if tf.config.list_physical_devices('GPU'):
-    logging.info("GPU rilevata. TensorFlow userà la GPU per il calcolo.")
-else:
-    logging.info("GPU non rilevata. TensorFlow userà la CPU.")
-
-# Impostazioni globali
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_NAME = "pammyhouse/dati-finanziari"
+
+# Lista per raccogliere i dati finanziari
+dates = []
+opens = []
+highs = []
+lows = []
+prices = []
+volumes = []
+changes = []
+
+# Lista globale per memorizzare le probabilità di ciascun simbolo
+symbol_probabilities = []
 
 stockSymbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JNJ", "WMT",
         "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE",
@@ -36,155 +37,188 @@ stockSymbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JN
         "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "LINKUSD", "ATOMUSD", "XTZUSD",
         "CCUSD", "XAUUSD", "XAGUSD", "GCUSD", "ZSUSX", "CTUSX", "ZCUSX", "OJUSX", "RBUSD"]
 
-symbol_probabilities = []
-
-# Configura il logger
-logging.basicConfig(level=logging.DEBUG)
-
 # Funzione per recuperare i dati dal file HTML
 def get_stock_data(symbol):
     url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{symbol.upper()}.html"
+    
     try:
+        # Scarica il contenuto della pagina HTML
         response = requests.get(url)
-        response.raise_for_status()
+        response.raise_for_status()  # Verifica che la richiesta sia andata a buon fine
+        
+        # Analizza il contenuto HTML
         soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table')
-        rows = table.find_all('tr')[1:]
         
-        dates, opens, highs, lows, prices, volumes = [], [], [], [], [], []
+        # Trova la tabella con i dati
+        table = soup.find('table')  # Trova la prima tabella nella pagina
+        
+        # Trova tutte le righe della tabella (tr)
+        rows = table.find_all('tr')[1:]  # Ignora la prima riga, che è l'intestazione
+        
+        # Itera attraverso ogni riga della tabella
         for row in rows:
-            cols = row.find_all('td')
-            if len(cols) >= 6:
-                dates.append(cols[0].text.strip())
-                opens.append(float(cols[1].text.strip()))
-                prices.append(float(cols[2].text.strip()))
-                highs.append(float(cols[3].text.strip()))
-                lows.append(float(cols[4].text.strip()))
-                volumes.append(float(cols[5].text.strip()))
+            cols = row.find_all('td')  # Estrai tutte le celle (td) della riga
+            
+            if len(cols) >= 7:  # Assicurati che ci siano almeno 7 colonne (come previsto)
+                date = cols[0].text.strip()  # Estrai la data
+                open_price = float(cols[1].text.strip())  # Estrai il prezzo di apertura
+                close_price = float(cols[2].text.strip())  # Estrai il prezzo di chiusura
+                high_price = float(cols[3].text.strip())  # Estrai il prezzo massimo
+                low_price = float(cols[4].text.strip())  # Estrai il prezzo minimo
+                volume = float(cols[5].text.strip())  # Estrai il volume
+                change = float(cols[6].text.strip())  # Estrai il cambiamento
+                
+                # Aggiungi i valori alle liste
+                dates.append(date)
+                opens.append(open_price)
+                highs.append(high_price)
+                lows.append(low_price)
+                prices.append(close_price)
+                volumes.append(volume)
+                changes.append(change)
+
+        # Dopo aver caricato i dati, invertiamo l'ordine per processarli dalla più vecchia alla più recente
+        reverse_data()
+
+        # Esegui l'operazione con XGBoost
+        operator_manager(symbol)
         
-        # Inverti i dati (dalla data più vecchia alla più recente)
-        return {
-            "dates": dates[::-1],
-            "opens": opens[::-1],
-            "highs": highs[::-1],
-            "lows": lows[::-1],
-            "prices": prices[::-1],
-            "volumes": volumes[::-1]
-        }
-    except Exception as e:
-        logging.error(f"Errore durante il recupero dei dati per {symbol}: {e}")
-        return None
+        # Verifica se i dati sono stati correttamente estratti
+        print("Dati caricati correttamente:")
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Errore durante il recupero dei dati: {e}")
+    
 
 # Funzione per invertire l'ordine dei dati
-def reverse_data(data):
-    for key in data.keys():
-        data[key] = data[key][::-1]
-    return data
+def reverse_data():
+    global prices, highs, lows, opens, volumes, changes
+    prices = prices[::-1]
+    highs = highs[::-1]
+    lows = lows[::-1]
+    opens = opens[::-1]
+    volumes = volumes[::-1]
+    changes = changes[::-1]
 
 # Funzione per stampare i dati giornalieri (log)
-def log_daily_data(symbol, data):
-    for i in range(len(data["dates"])):
-        log_message = (
-            f"Simbolo: {symbol}, Data: {data['dates'][i]}, Apertura: {data['opens'][i]}, "
-            f"Chiusura: {data['prices'][i]}, Massimo: {data['highs'][i]}, Minimo: {data['lows'][i]}, "
-            f"Volume: {data['volumes'][i]}"
-        )
+def log_daily_data(symbol):
+    for i in range(len(dates)):
+        date = dates[i]
+        open_price = opens[i]
+        high_price = highs[i]
+        low_price = lows[i]
+        close = prices[i]
+        volume = volumes[i]
+        change = changes[i]
+        
+        log_message = f"Symbol: {symbol}, Date: {date}, Open: {open_price:.2f}, Close: {close:.2f}, High: {high_price:.2f}, Low: {low_price:.2f}, Volume: {volume:.2f}, Change: {change:.2f}"
         logging.debug(log_message)
 
-# Funzione per creare e addestrare il modello LSTM
-def train_lstm_model(data, symbol):
-    try:
-        prices = np.array(data["prices"]).reshape(-1, 1)
-        scaler = MinMaxScaler()
-        scaled_prices = scaler.fit_transform(prices)
-        
-        # Crea sequenze temporali
-        X, y = [], []
-        for i in range(60, len(scaled_prices)):
-            X.append(scaled_prices[i - 60:i])
-            y.append(scaled_prices[i])
-        
-        X, y = np.array(X), np.array(y)
-        
-        # Costruzione del modello LSTM
-        model = Sequential([
-            LSTM(50, return_sequences=True, input_shape=(X.shape[1], X.shape[2])),
-            LSTM(50),
-            Dense(1)
-        ])
-        model.compile(optimizer='adam', loss='mean_squared_error')
-        model.fit(X, y, epochs=10, batch_size=32, verbose=0)
-        
-        # Predizione
-        last_sequence = scaled_prices[-60:].reshape(1, 60, 1)
-        prediction = model.predict(last_sequence)[0][0]
-        prediction = scaler.inverse_transform([[prediction]])[0][0]
-        
-        # Calcolo della probabilità di crescita
-        probability = 1 if prediction > prices[-1] else 0
-        logging.info(f"Simbolo: {symbol}, Probabilità di crescita: {probability * 100:.2f}%")
-        return symbol, probability * 100
-    except Exception as e:
-        logging.error(f"Errore durante l'addestramento del modello per {symbol}: {e}")
-        return symbol, 0
+# Funzione che esegue l'operazione con XGBoost
+def operator_manager(symbol):
+    if len(prices) < 2:
+        logging.error("Dati insufficienti per il calcolo.")
+        return
 
-# Funzione per salvare la previsione in un file HTML
-def upload_prediction_html(repo, symbol, probability):
-    try:
-        file_path = f"predictions/{symbol}.html"
-        html_content = [
-            f"<html><head><title>Previsione per {symbol}</title></head><body>",
-            f"<h1>Previsione per {symbol}</h1>",
-            f"<p>Probabilità di crescita: {probability:.2f}%</p>",
-            "</body></html>"
+    # Creazione dei dati di addestramento per XGBoost
+    features = []
+    targets = []
+    
+    for i in range(1, len(prices)):
+        sample = [
+            opens[i], prices[i], highs[i], lows[i],
+            volumes[i], changes[i]
         ]
-        repo.create_file(file_path, f"Created probability for {symbol}", "\n".join(html_content))
-        logging.info(f"File HTML per {symbol} salvato con successo.")
-    except GithubException as e:
-        logging.error(f"Errore durante il salvataggio del file HTML per {symbol}: {e}")
+        features.append(sample)
+        targets.append(1 if prices[i] > prices[i - 1] else 0)
+    
+    # Addestramento del modello XGBoost
+    model = XGBClassifier(n_estimators=200, max_depth=15, use_label_encoder=False)
+    model.fit(features, targets)
 
-# Funzione che esegue l'operazione di gestione del modello
-def operator_manager(symbol, repo):
-    data = get_stock_data(symbol)
-    if data:
-        reverse_data(data)
-        log_daily_data(symbol, data)
-        symbol, probability = train_lstm_model(data, symbol)
-        upload_prediction_html(repo, symbol, probability)
-    else:
-        logging.error(f"Impossibile processare i dati per {symbol}.")
+    # Previsione per il prossimo giorno
+    last_sample = [
+        opens[-1], prices[-1], highs[-1], lows[-1],
+        volumes[-1], changes[-1]
+    ]
+    
+    prediction = model.predict([last_sample])
+    prediction_probability = model.predict_proba([last_sample])[0][1]  # Probabilità di crescita
+    
+    prediction_text = f"Probabilità di crescita: {prediction_probability * 100:.2f}%"
+    logging.debug(prediction_text)
+    # Salva la previsione in un file HTML
+    github = Github(GITHUB_TOKEN)
+    repo = github.get_repo(REPO_NAME)
+    upload_prediction_html(repo, symbol, prediction_probability * 100)
 
 # Funzione per caricare e classificare tutte le probabilità
-def create_classification_file(repo, results):
+def create_classification_file():
+    # Ordina la lista di simboli per probabilità (decrescente) e per nome (alfabetico) in caso di probabilità uguali
+    sorted_symbols = sorted(symbol_probabilities, key=lambda x: (-x[1], x[0]))
+
+    # Crea il contenuto del file HTML
+    html_content = []
+    html_content.append("<html><head><title>Classifica dei Simboli</title></head><body>")
+    html_content.append("<h1>Classifica dei Simboli in Base alla Probabilità di Crescita</h1>")
+    html_content.append("<table border='1'><tr><th>Simbolo</th><th>Probabilità</th></tr>")
+    
+    # Aggiungi ogni simbolo e la sua probabilità alla tabella HTML
+    for symbol, probability in sorted_symbols:
+        html_content.append(f"<tr><td>{symbol}</td><td>{probability:.2f}%</td></tr>")
+    
+    html_content.append("</table></body></html>")
+
+    # Salva il file HTML nella cartella 'results'
+    file_path = "results/classifica.html"
+    
+    # Salva il file su GitHub
+    github = Github(GITHUB_TOKEN)
+    repo = github.get_repo(REPO_NAME)
     try:
-        classification_file = "classification.html"
-        sorted_results = sorted(results, key=lambda x: x[1], reverse=True)
-        html_content = [
-            "<html><head><title>Classificazione delle Probabilità</title></head><body>",
-            "<h1>Classifica delle Probabilità di Crescita</h1>",
-            "<table border='1'><tr><th>Simbolo</th><th>Probabilità (%)</th></tr>"
-        ]
-        for symbol, probability in sorted_results:
-            html_content.append(f"<tr><td>{symbol}</td><td>{probability:.2f}</td></tr>")
-        html_content.append("</table></body></html>")
+        contents = repo.get_contents(file_path)
+        repo.update_file(contents.path, "Updated classification", "\n".join(html_content), contents.sha)
+    except GithubException:
+        # Se il file non esiste, creiamo un nuovo file
+        repo.create_file(file_path, "Created classification", "\n".join(html_content))
+    
+    print("Classifica aggiornata con successo!")
+
+# Funzione per salvare la previsione in un file HTML (modificata per registrare la probabilità)
+def upload_prediction_html(repo, symbol, probability):
+    # Aggiungi la probabilità al dizionario delle probabilità
+    symbol_probabilities.append((symbol, probability))
+
+    file_path = f"results/{symbol.upper()}_RESULT.html"
+
+    html_content = []
+    html_content.append(f"<html><head><title>Previsione per {symbol}</title></head><body>")
+    html_content.append(f"<h1>Previsione per: ({symbol})</h1>")
+
+    html_content.append("<table border='1'><tr><th>Probability</th></tr>")
+    html_content.append("<tr>")
+    html_content.append(f"<td>{probability}</td>")
+    html_content.append("</table></body></html>")
         
-        repo.create_file(classification_file, "Updated classification file", "\n".join(html_content))
-        logging.info("Classifica aggiornata con successo.")
-    except GithubException as e:
-        logging.error(f"Errore durante la creazione del file di classifica: {e}")
+    try:
+        contents = repo.get_contents(file_path)
+        repo.update_file(contents.path, f"Updated probability for {symbol}", "\n".join(html_content), contents.sha)
+    except Exception as e:
+        # Se il file non esiste, lo creiamo
+        repo.create_file(file_path, f"Created probability for {symbol}", "\n".join(html_content))
 
-# Parallelizzazione
+# Funzione principale che carica i dati e esegue le operazioni per ogni simbolo
 if __name__ == "__main__":
-    # Connettiti al repository GitHub
-    g = Github(GITHUB_TOKEN)
-    repo = g.get_repo(REPO_NAME)
+    logging.basicConfig(level=logging.DEBUG)  # Configura il logging
+    for symbol in stockSymbols:
+        get_stock_data(symbol)
+        dates = []
+        opens = []
+        highs = []
+        lows = []
+        prices = []
+        volumes = []
+        changes = []
 
-    # Numero di processi paralleli
-    num_cores = os.cpu_count() or 4
-    logging.info(f"Avvio con parallelizzazione su {num_cores} core.")
-
-    # Processa i simboli in parallelo
-    results = Parallel(n_jobs=num_cores)(delayed(operator_manager)(symbol, repo) for symbol in stockSymbols)
-
-    # Crea il file di classifica
-    create_classification_file(repo, results)
+    # Dopo aver completato il processo per tutti i simboli, creiamo la classifica
+    create_classification_file()

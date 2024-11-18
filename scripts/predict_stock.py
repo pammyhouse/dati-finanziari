@@ -133,7 +133,7 @@ def operator_manager(symbol):
         targets.append(1 if prices[i] > prices[i - 1] else 0)
     
     # Addestramento del modello XGBoost
-    model = XGBClassifier(n_estimators=200, max_depth=15, use_label_encoder=False)
+    model = XGBClassifier(n_estimators=200, max_depth=15)
     model.fit(features, targets)
 
     # Previsione per il prossimo giorno

@@ -2,7 +2,7 @@ name: Predict and Rank Stocks
 
 on:
   schedule:
-    - cron: '18 */4 * * *'  # Esecuzione ogni 4 ore, all'inizio dell'ora (00:00, 04:00, 08:00, ecc.)
+    - cron: '18 */96 * * *'  # Esecuzione ogni 4 ore, all'inizio dell'ora (00:00, 04:00, 08:00, ecc.)
   workflow_dispatch:  # Per avviare manualmente se necessario
 
 jobs:

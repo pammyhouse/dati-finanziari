@@ -5,6 +5,7 @@ import logging
 from xgboost import XGBClassifier  # Import XGBoost
 import numpy as np
 from github import Github, GithubException
+import pandas as pd
 
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -114,23 +115,62 @@ def log_daily_data(symbol):
         log_message = f"Symbol: {symbol}, Date: {date}, Open: {open_price:.2f}, Close: {close:.2f}, High: {high_price:.2f}, Low: {low_price:.2f}, Volume: {volume:.2f}, Change: {change:.2f}"
         logging.debug(log_message)
 
+
+def calculate_technical_indicators():
+    df = pd.DataFrame({
+        'Open': opens,
+        'Close': prices,
+        'High': highs,
+        'Low': lows,
+        'Volume': volumes
+    })
+    
+    # Media Mobile Semplice (SMA)
+    df['SMA_20'] = df['Close'].rolling(window=20).mean()
+
+    # Media Mobile Esponenziale (EMA)
+    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+
+    # Relative Strength Index (RSI)
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # Moving Average Convergence Divergence (MACD)
+    df['MACD'] = df['EMA_20'] - df['EMA_20'].ewm(span=26, adjust=False).mean()
+    df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    # Bollinger Bands
+    df['Rolling Mean'] = df['Close'].rolling(window=20).mean()
+    df['Upper Band'] = df['Rolling Mean'] + 2 * df['Close'].rolling(window=20).std()
+    df['Lower Band'] = df['Rolling Mean'] - 2 * df['Close'].rolling(window=20).std()
+    
+    return df
+
 # Funzione che esegue l'operazione con XGBoost
 def operator_manager(symbol):
     if len(prices) < 2:
         logging.error("Dati insufficienti per il calcolo.")
         return
 
+    # Calcolare gli indicatori tecnici
+    df = calculate_technical_indicators()
+
     # Creazione dei dati di addestramento per XGBoost
     features = []
     targets = []
     
-    for i in range(1, len(prices)):
+    # Iniziamo a calcolare le features a partire da un indice più alto per non avere NaN nei calcoli degli indicatori
+    for i in range(20, len(prices)):  # Iniziamo da 20 per evitare NaN da indicatori come SMA e Bollinger Bands
         sample = [
-            opens[i], prices[i], highs[i], lows[i],
-            volumes[i], changes[i]
+            df['Open'][i], df['Close'][i], df['High'][i], df['Low'][i],
+            df['Volume'][i], df['RSI'][i], df['SMA_20'][i], df['EMA_20'][i],
+            df['MACD'][i], df['Signal_Line'][i], df['Upper Band'][i], df['Lower Band'][i]
         ]
         features.append(sample)
-        targets.append(1 if prices[i] > prices[i - 1] else 0)
+        targets.append(1 if df['Close'][i] > df['Close'][i - 1] else 0)
     
     # Addestramento del modello XGBoost
     model = XGBClassifier(n_estimators=300, max_depth=8)
@@ -138,8 +178,9 @@ def operator_manager(symbol):
 
     # Previsione per il prossimo giorno
     last_sample = [
-        opens[-1], prices[-1], highs[-1], lows[-1],
-        volumes[-1], changes[-1]
+        df['Open'].iloc[-1], df['Close'].iloc[-1], df['High'].iloc[-1], df['Low'].iloc[-1],
+        df['Volume'].iloc[-1], df['RSI'].iloc[-1], df['SMA_20'].iloc[-1], df['EMA_20'].iloc[-1],
+        df['MACD'].iloc[-1], df['Signal_Line'].iloc[-1], df['Upper Band'].iloc[-1], df['Lower Band'].iloc[-1]
     ]
     
     prediction = model.predict([last_sample])

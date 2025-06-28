@@ -1,8 +1,8 @@
 name: Update Financial Data
 
 on:
-  schedule:
-    - cron: '0 */12 * * *'  # Esecuzione ogni 12 ore, all'inizio dell'ora (00:00, 04:00, 08:00, ecc.)
+  #schedule:
+    #- cron: '0 */12 * * *'  # Esecuzione ogni 12 ore, all'inizio dell'ora (00:00, 04:00, 08:00, ecc.)
   workflow_dispatch:  # Per avviare manualmente se necessario
 
 jobs:

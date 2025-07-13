@@ -23,7 +23,7 @@ changes = []
 # Lista globale per memorizzare le probabilità di ciascun simbolo
 symbol_probabilities = []
 
-stockSymbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JNJ", "WMT",
+'''stockSymbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JNJ", "WMT",
         "NVDA", "PYPL", "DIS", "NFLX", "NIO", "NRG", "ADBE", "INTC", "CSCO", "PFE",
         "KO", "PEP", "MRK", "ABT", "XOM", "CVX", "T", "MCD", "NKE", "HD",
         "IBM", "CRM", "BMY", "ORCL", "ACN", "LLY", "QCOM", "HON", "COST", "SBUX",
@@ -36,7 +36,57 @@ stockSymbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "V", "JPM", "JN
         "AUDJPY", "CADJPY", "CHFJPY", "EURAUD", "EURNZD", "EURCAD", "EURCHF", "GBPCHF", "GBPJPY", "AUDCAD",
         "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD", "BCHUSD", "EOSUSD", "XLMUSD", "ADAUSD", "TRXUSD", "NEOUSD",
         "DASHUSD", "XMRUSD", "ETCUSD", "ZECUSD", "BNBUSD", "DOGEUSD", "USDTUSD", "LINKUSD", "ATOMUSD", "XTZUSD",
-        "CCUSD", "XAUUSD", "XAGUSD", "GCUSD", "ZSUSX", "CTUSX", "ZCUSX", "OJUSX", "RBUSD"]
+        "CCUSD", "XAUUSD", "XAGUSD", "GCUSD", "ZSUSX", "CTUSX", "ZCUSX", "OJUSX", "RBUSD"]'''
+
+stockSymbols = [
+    # New Stocks Only
+    "BABA",   # Alibaba
+    "HTZ",    # Hertz
+    "UBER",   # Uber
+    "LYFT",   # Lyft
+    "PLTR",   # Palantir
+    "SNOW",   # Snowflake
+    "ROKU",   # Roku
+    "TWLO",   # Twilio
+    "SQ",     # Square (Block)
+    "COIN",   # Coinbase
+    "RIVN",   # Rivian
+    "LCID",   # Lucid
+    "DDOG",   # Datadog
+    "NET",    # Cloudflare
+    "SHOP",   # Shopify
+    "ZI",     # ZoomInfo
+    "ZM",     # Zoom Video
+    "BIDU",   # Baidu
+    "PDD",    # Pinduoduo
+    "JD",     # JD.com
+    "ARM",    # ARM Holdings
+    "DUOL",   # Duolingo
+    # Major Indices
+    "^GSPC",       # S&P 500
+    "^DJI",        # Dow Jones Industrial Average
+    "^IXIC",       # Nasdaq Composite
+    "^NDX",        # Nasdaq 100
+    "^RUT",        # Russell 2000
+    "^VIX",        # CBOE Volatility Index
+
+    # European Indices
+    "^STOXX50E",   # Euro Stoxx 50
+    "^GDAXI",      # DAX (Germany)
+    "^FCHI",       # CAC 40 (France)
+    "^FTSE",       # FTSE 100 (UK)
+    "^SSMI",       # Swiss Market Index
+    "^IBEX",       # IBEX 35 (Spain)
+    "^AEX",        # AEX Index (Netherlands)
+
+    # Asian Indices
+    "^N225",       # Nikkei 225 (Japan)
+    "^HSI",        # Hang Seng Index (Hong Kong)
+    "000001.SS",   # Shanghai Composite Index (China)
+    "^NSEI",       # Nifty 50 (India)
+    "^KS11"        # KOSPI (South Korea)
+]
+
 
 # Funzione per recuperare i dati dal file HTML
 def get_stock_data(symbol):

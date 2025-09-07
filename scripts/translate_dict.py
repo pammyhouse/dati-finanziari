@@ -50,7 +50,8 @@ if __name__ == "__main__":
         "access": 0.7,
         "accept": 0.7,
         "accelerate": 0.8,
-        "accredit": 0.6
+        "accredit": 0.6,
+        "once upon a time, there was something": 0.8
     }
 
     # Traduzione

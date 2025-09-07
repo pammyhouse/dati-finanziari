@@ -36,6 +36,8 @@
   "back": 0.3,
   "backer": 0.65,
   "backlog": 0.5,
+  "bad": 0.15,
+  "bad news": 0.1,
   "bail": 0.3,
   "bailout": 0.3,
   "balance": 0.6,

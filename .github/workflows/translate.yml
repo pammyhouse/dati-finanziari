@@ -27,3 +27,9 @@ jobs:
       - name: Esegui traduzione
         run: |
           python scripts/translate_dict.py
+
+      - name: Upload traduzione come artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dizionario-tradotto
+          path: scripts/dizionario_tradotto.json

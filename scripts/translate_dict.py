@@ -2,17 +2,29 @@
 import json
 import os
 from googletrans import Translator
+from time import sleep
 
-def traduci_dizionario_chiavi(dizionario, src='en', dest='it'):
+BATCH_SIZE = 100  # numero di parole per richiesta
+
+def traduci_dizionario_chiavi(dizionario, src='en', dest='it', batch_size=BATCH_SIZE, delay=1):
     translator = Translator()
+    parole = list(dizionario.keys())
     nuovo_dizionario = {}
-    for chiave, valore in dizionario.items():
+
+    for i in range(0, len(parole), batch_size):
+        batch = parole[i:i+batch_size]
         try:
-            traduzione = translator.translate(chiave, src=src, dest=dest).text
+            traduzioni = translator.translate(batch, src=src, dest=dest)
+            for traduzione_obj, chiave in zip(traduzioni, batch):
+                nuovo_dizionario[traduzione_obj.text] = dizionario[chiave]
         except Exception as e:
-            print(f"Errore durante la traduzione di '{chiave}': {e}")
-            traduzione = chiave  # fallback
-        nuovo_dizionario[traduzione] = valore
+            print(f"Errore durante la traduzione del batch {i}-{i+len(batch)-1}: {e}")
+            # fallback: mantieni chiavi originali
+            for chiave in batch:
+                nuovo_dizionario[chiave] = dizionario[chiave]
+
+        sleep(delay)  # piccolo ritardo per evitare throttling
+
     return nuovo_dizionario
 
 if __name__ == "__main__":

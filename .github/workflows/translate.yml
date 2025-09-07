@@ -1,0 +1,29 @@
+name: Traduci Dizionario
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # permette l'esecuzione manuale
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Esegui traduzione
+        run: |
+          python translate_dict.py

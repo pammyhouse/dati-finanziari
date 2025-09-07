@@ -1,5 +1,6 @@
 import requests
 import json
+import os
 
 def traduci_parole_batch(parole, source_lang="en", target_lang="it"):
     separatore = "|||"
@@ -45,8 +46,11 @@ dizionario = {
 # Traduzione
 dizionario_tradotto = traduci_dizionario_chiavi(dizionario)
 
-# Salvataggio su file JSON
-with open("dizionario_tradotto.json", "w", encoding="utf-8") as f:
+# Salvataggio su file JSON nella stessa cartella dello script
+script_dir = os.path.dirname(__file__)
+output_path = os.path.join(script_dir, "dizionario_tradotto.json")
+
+with open(output_path, "w", encoding="utf-8") as f:
     json.dump(dizionario_tradotto, f, ensure_ascii=False, indent=2)
 
-print("Traduzione completata. Risultato salvato in 'dizionario_tradotto.json'.")
+print(f"Traduzione completata. Risultato salvato in '{output_path}'.")

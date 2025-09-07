@@ -26,4 +26,4 @@ jobs:
 
       - name: Esegui traduzione
         run: |
-          python translate_dict.py
+          python scripts/translate_dict.py

@@ -25,7 +25,7 @@ jobs:
         run: python scripts/convert_gptneo.py
 
       - name: Upload TFLite artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: gpt-neo-125-tflite
           path: ./model_tf/gpt_neo_125.tflite

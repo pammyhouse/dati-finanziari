@@ -23,4 +23,4 @@ jobs:
           pip install ollamafreeapi
 
       - name: Run script
-        run: python scripts/ollama.py
+        run: python scripts/ollama_test.py

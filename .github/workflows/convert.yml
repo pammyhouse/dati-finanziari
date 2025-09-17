@@ -1,7 +1,7 @@
-name: Convert GPT-Neo 125M to TFLite
+name: Convert GPT-Neo 125M to ONNX
 
 on:
-  workflow_dispatch:  # esegui manualmente
+  workflow_dispatch:
 
 jobs:
   convert:
@@ -20,14 +20,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch --upgrade
-          pip install tensorflow --upgrade
-          pip install --upgrade git+https://github.com/huggingface/transformers.git  # ultima versione da GitHub
+          pip install onnx onnxruntime transformers --upgrade
 
       - name: Run conversion script
-        run: python scripts/convert_gptneo.py
+        run: python scripts/convert_gptneo_onnx.py
 
-      - name: Upload TFLite artifact
+      - name: Upload ONNX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gpt-neo-125-fp16-tflite
-          path: ./model_tf/gpt_neo_125_fp16.tflite
+          name: gpt-neo-125-onnx
+          path: ./model_onnx/gpt_neo_125.onnx

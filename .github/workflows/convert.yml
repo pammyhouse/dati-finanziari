@@ -21,7 +21,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch --upgrade
           pip install tensorflow --upgrade
-          pip install transformers --upgrade  # importante per TFGPTNeoForCausalLM
+          pip install --upgrade git+https://github.com/huggingface/transformers.git  # ultima versione da GitHub
 
       - name: Run conversion script
         run: python scripts/convert_gptneo.py

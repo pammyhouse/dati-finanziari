@@ -1,38 +1,41 @@
-# scripts/convert_gptneo.py
+# scripts/convert_gptneo_onnx.py
 
-from transformers import TFGPTNeoForCausalLM, GPT2Tokenizer
-import tensorflow as tf
+import torch
+from transformers import GPTNeoForCausalLM, GPT2Tokenizer
 import os
 
-# Modello e tokenizer
 model_name = "EleutherAI/gpt-neo-125M"
 
-# Crea cartelle se non esistono
-os.makedirs("./model_tf/tokenizer", exist_ok=True)
-os.makedirs("./model_tf/tf_model", exist_ok=True)
+# Crea cartelle
+os.makedirs("./model_onnx", exist_ok=True)
+os.makedirs("./model_onnx/tokenizer", exist_ok=True)
 
 print("Scaricando tokenizer...")
 tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-tokenizer.save_pretrained("./model_tf/tokenizer")
-print("Tokenizer salvato in ./model_tf/tokenizer")
+tokenizer.save_pretrained("./model_onnx/tokenizer")
+print("Tokenizer salvato in ./model_onnx/tokenizer")
 
-print("Scaricando modello GPT-Neo 125M da PyTorch e convertendo in TensorFlow...")
-model = TFGPTNeoForCausalLM.from_pretrained(model_name, from_pt=True)
+print("Scaricando modello GPT-Neo 125M...")
+model = GPTNeoForCausalLM.from_pretrained(model_name)
+model.eval()
 
-print("Salvando modello come TensorFlow SavedModel...")
-model.save_pretrained("./model_tf/tf_model", saved_model=True)
-print("SavedModel salvato in ./model_tf/tf_model")
+# Dummy input per esportazione
+dummy_input = tokenizer("Hello world", return_tensors="pt")
+input_ids = dummy_input["input_ids"]
 
-print("Convertendo in TFLite FP16...")
-converter = tf.lite.TFLiteConverter.from_saved_model("./model_tf/tf_model")
-converter.optimizations = [tf.lite.Optimize.DEFAULT]
-converter.target_spec.supported_types = [tf.float16]  # FP16
+# Esporta in ONNX
+onnx_path = "./model_onnx/gpt_neo_125.onnx"
+print("Esportando modello in ONNX...")
+torch.onnx.export(
+    model,
+    (input_ids,),
+    onnx_path,
+    input_names=["input_ids"],
+    output_names=["logits"],
+    opset_version=13,
+    do_constant_folding=True,
+    dynamic_axes={"input_ids": {0: "batch_size", 1: "seq_len"},
+                  "logits": {0: "batch_size", 1: "seq_len"}}
+)
 
-tflite_model = converter.convert()
-
-# Salva modello TFLite
-tflite_path = "./model_tf/gpt_neo_125_fp16.tflite"
-with open(tflite_path, "wb") as f:
-    f.write(tflite_model)
-
-print(f"Conversione completata! File TFLite salvato in {tflite_path}")
+print(f"Conversione completata! File ONNX salvato in {onnx_path}")

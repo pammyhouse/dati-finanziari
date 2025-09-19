@@ -25,7 +25,7 @@ jobs:
         run: python scripts/embedding.py
 
       - name: Upload embeddings artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: aapl-embeddings
           path: aapl_news_embeddings.npz

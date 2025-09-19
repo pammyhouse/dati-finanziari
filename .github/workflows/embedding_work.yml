@@ -1,7 +1,7 @@
 name: Run Sentence Embeddings
 
 on:
-  workflow_dispatch:  # consente di avviare il workflow manualmente da GitHub UI
+  workflow_dispatch:  # consente di avviare il workflow manualmente
 
 jobs:
   run-embeddings:
@@ -19,7 +19,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install sentence-transformers scikit-learn
+          pip install sentence-transformers scikit-learn requests beautifulsoup4 numpy
 
       - name: Run script
         run: python scripts/embedding.py
+
+      - name: Upload embeddings artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: aapl-embeddings
+          path: aapl_news_embeddings.npz

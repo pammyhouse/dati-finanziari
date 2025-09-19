@@ -645,6 +645,12 @@
   "skepticism": 0.3,
   "slash": 0.3,
   "slide": 0.3,
+  "slip": 0.3,
+  "slips": 0.3,
+  "slipped": 0.3,
+  "slip down": 0.1
+  "slips down": 0.1,
+  "slipped down": 0.1,
   "slow": 0.28,
   "soar": 0.8,
   "soften": 0.3,

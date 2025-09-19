@@ -1,38 +1,45 @@
 import feedparser
 from sentence_transformers import SentenceTransformer
-from sklearn.feature_extraction.text import CountVectorizer
 import numpy as np
 
-# 1️⃣ Recupera notizie da Google News RSS
+# ---------------------------
+# 1️⃣ Recupero notizie da Google News RSS
+# ---------------------------
 def fetch_google_news_rss(query="AAPL"):
     feed_url = f"https://news.google.com/rss/search?q={query}&hl=it&gl=IT&ceid=IT:it"
     feed = feedparser.parse(feed_url)
     articles = []
     for entry in feed.entries:
-        # Usa title + summary come testo dell'articolo
+        # Usa titolo + riassunto come testo
         text = f"{entry.title} {entry.summary}".strip()
         if text:
             articles.append(text)
     return articles
 
-# 2️⃣ Genera embedding
-def generate_embeddings(texts, model, batch_size=32):
-    return model.encode(texts, batch_size=batch_size)
+# ---------------------------
+# 2️⃣ Generazione n-gram con embedding
+# ---------------------------
+def generate_ngrams_embeddings(texts, model, n=1):
+    tokens = []
+    for text in texts:
+        words = text.split()
+        if len(words) < n:
+            continue
+        ngrams = [" ".join(words[i:i+n]) for i in range(len(words)-n+1)]
+        tokens.extend(ngrams)
 
-# 3️⃣ Crea n-grammi (unigram, bigram, trigram)
-def generate_ngrams(texts, n=2):
-    texts = [t for t in texts if t.strip()]
-    if not texts:
+    tokens = list(set(tokens))  # rimuovi duplicati
+    if not tokens:
         return [], np.array([])
-    vectorizer = CountVectorizer(ngram_range=(n, n))
-    ngrams_matrix = vectorizer.fit_transform(texts)
-    return vectorizer.get_feature_names_out(), ngrams_matrix.toarray()
 
-# -----------------------------
-# Main
-# -----------------------------
+    embeddings = model.encode(tokens, batch_size=32, show_progress_bar=True)
+    return tokens, embeddings
+
+# ---------------------------
+# MAIN
+# ---------------------------
 if __name__ == "__main__":
-    # Inizializza il modello
+    # Inizializza modello
     model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
 
     # Recupera articoli
@@ -40,34 +47,31 @@ if __name__ == "__main__":
     print(f"Articoli recuperati: {len(article_texts)}")
 
     if not article_texts:
-        print("Nessun articolo valido trovato. Esco dallo script.")
+        print("Nessun articolo trovato. Esco.")
         exit(0)
 
-    # Embedding frasi complete
-    sentence_embeddings = generate_embeddings(article_texts, model)
+    # Unigram, bigram, trigram embeddings
+    unigram_words, unigram_embeddings = generate_ngrams_embeddings(article_texts, model, n=1)
+    bigram_words, bigram_embeddings = generate_ngrams_embeddings(article_texts, model, n=2)
+    trigram_words, trigram_embeddings = generate_ngrams_embeddings(article_texts, model, n=3)
 
-    # Creazione di n-gram
-    unigram_words, unigram_embeddings = generate_ngrams(article_texts, n=1)
-    bigram_words, bigram_embeddings = generate_ngrams(article_texts, n=2)
-    trigram_words, trigram_embeddings = generate_ngrams(article_texts, n=3)
-
-    # Unione di tutti i token e embedding
-    all_words = list(unigram_words) + list(bigram_words) + list(trigram_words)
-
+    # Unisci tutto
+    all_words = unigram_words + bigram_words + trigram_words
     embeddings_list = []
-    if unigram_embeddings.size != 0:
+    if unigram_embeddings.size:
         embeddings_list.append(unigram_embeddings)
-    if bigram_embeddings.size != 0:
+    if bigram_embeddings.size:
         embeddings_list.append(bigram_embeddings)
-    if trigram_embeddings.size != 0:
+    if trigram_embeddings.size:
         embeddings_list.append(trigram_embeddings)
 
-    if embeddings_list:
-        all_embeddings = np.vstack(embeddings_list)
-    else:
-        all_embeddings = np.array([])
+    if not embeddings_list:
+        print("Nessun embedding generato. Esco.")
+        exit(0)
 
-    # Salvataggio su file
+    all_embeddings = np.vstack(embeddings_list)
+
+    # Salvataggio dataset
     np.savez("aapl_news_embeddings.npz", words=all_words, embeddings=all_embeddings)
     print(f"Dataset salvato: {len(all_words)} token (unigram/bigram/trigram).")
 

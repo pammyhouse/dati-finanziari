@@ -184,7 +184,7 @@
   "aggravato": 0.1,
   "aggravata": 0.1,
   "aiuto": 0.8,
-  "ascesa": 0.8
+  "ascesa": 0.8,
   "aiutare": 0.8,
   "aiutato": 0.8,
   "aiutata": 0.8,
@@ -2320,7 +2320,7 @@
   "grossa crescita": 0.9,
   "grossa flessione": 0.15,
   "governo pronto": 0.75,
-  "il governo è pronto": "0.75,
+  "il governo è pronto": 0.75,
   "grande crescita del mercato": 0.95,
   "grande aumento dei ricavi": 0.9,
   "grande successo dell'azienda": 0.95,
@@ -2417,7 +2417,7 @@
   "hyperspeculation": 0.0,
   "hackeraggio": 0.1,
   "hacker": 0.1,
-  "haircut": 0.2
+  "haircut": 0.2,
   "hausse": 0.8,
   "haussier": 0.8,
   "hardship": 0.2,
@@ -2944,7 +2944,6 @@
   "kickback corruption scheme": 0.0,
   "kredit default risk": 0.0,
   "key market indicator": 0.85,
-  {
   "liquidità": 0.9,
   "liquido": 0.9,
   "lieve": 0.75,
@@ -2957,7 +2956,7 @@
   "limitati": 0.2,
   "limitate": 0.2,
   "limitante": 0.2,
-  "limitanti": 0.2
+  "limitanti": 0.2,
   "lusinghiero": 0.9,
   "lusinghiera": 0.9,
   "lusinghieri": 0.9,
@@ -3223,7 +3222,7 @@
   "notevole miglioramento": 0.9,
   "notevole crescita": 0.9,
   "notevole aumento": 0.9,
-  "notevole ascesa": 0.85
+  "notevole ascesa": 0.85,
   "notevole calo": 0.1,
   "notevole discesa": 0.1,
   "nadir storico": 0.15,
@@ -3584,7 +3583,7 @@
   "quantitativo utile netto positivo": 0.9,
   "quantitativa redditività elevata": 0.9,
   "quantitativi margini netti positivi": 0.9,
-  "quantitative entrate in aumento": 0.9
+  "quantitative entrate in aumento": 0.9,
   "rialzo": 0.9,
   "rialzi": 0.9,
   "ribasso": 0.1,
@@ -3713,9 +3712,9 @@
   "ristrutturazioni aziendali": 0.8,
   "rialzo previsto": 0.9,
   "rialzo stimato": 0.9,
-  "rialzo possibile": 0.9
+  "rialzo possibile": 0.9,
   "ribasso previsto": 0.1,
-  "ribasso stimato": 0.1
+  "ribasso stimato": 0.1,
   "ribasso possibile": 0.1,
   "rialzo dei titoli azionari": 0.9,
   "rialzi dei titoli azionari": 0.9,
@@ -3783,7 +3782,7 @@
   "scesa": 0.1,
   "sceso": 0.1,
   "scese": 0.1,
-  "scesi": 0.1
+  "scesi": 0.1,
   "sconto": 0.7,
   "scoraggiamento": 0.1,
   "scricchiolio": 0.1,
@@ -3847,7 +3846,7 @@
   "svalutate": 0.1,
   "svalutati": 0.1,
   "svalutare": 0.1,
-  "svaluta": 0.1
+  "svaluta": 0.1,
   "scetticismo": 0.2,
   "slancio": 0.65,
   "svolta": 0.65,
@@ -3956,7 +3955,6 @@
   "successo netto": 0.9,
   "sviluppo rapido": 0.9,
   "salita stabile": 0.85,
-  {
   "salita dei ricavi": 0.9,
   "salita dei profitti": 0.9,
   "salita dei prezzi": 0.85,
@@ -4047,7 +4045,7 @@
   "svalutazione della valuta": 0.1,
   "svalutazione del dollaro": 0.1,
   "svalutazione dell'euro": 0.1,
-  "svalutazione dell'oro": 0.1
+  "svalutazione dell'oro": 0.1,
   "svolta positiva improvvisa": 0.95,
   "svolta negativa inattesa": 0.1,
   "svolta di mercato": 0.85,
@@ -4101,7 +4099,7 @@
   "tonfo": 0.1,
   "tolleranza": 0.65,
   "tollerante": 0.6,
-  "tollerare": 0.6
+  "tollerare": 0.6,
   "tenace": 0.85,
   "trionfo": 0.95,
   "trionfale": 0.95,
@@ -4241,7 +4239,7 @@
   "trend al rialzo": 0.9,
   "trend al ribasso": 0.1,
   "trend in consolidamento": 0.7,
-  "trading ad alta frequenza": 0.7
+  "trading ad alta frequenza": 0.7,
   "trading ad alto rischio": 0.3,
   "trading in crescita": 0.9,
   "trimestrale sopra le attese": 0.95,
@@ -4255,10 +4253,10 @@
   "trasformazione del settore": 0.8,
   "trasformazione del mercato": 0.8,
   "trasparenza nei bilanci": 0.85,
-  "trasparenza nella gestione": 0.8
+  "trasparenza nella gestione": 0.8,
   "tassi in rialzo": 0.8,
   "tassi in ribasso": 0.2,
-  "tassi di crescita": 0.9
+  "tassi di crescita": 0.9,
   "tassazione agevolata speciale": 0.85,
   "traguardo storico raggiunto": 0.95,
   "traguardo importante raggiunto": 0.9,

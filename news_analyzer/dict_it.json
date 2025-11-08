@@ -741,7 +741,7 @@
   "cessione": 0.4,
   "cedola": 0.8,
   "cedole": 0.8,
-  "carenza": 0.2
+  "carenza": 0.2,
   "cautela": 0.4,
   "cauto": 0.4,
   "competitività": 0.8,
@@ -758,7 +758,7 @@
   "compensazione": 0.7,
   "conferimento": 0.7,
   "conferimenti": 0.7,
-  "collaborazione": 0.8
+  "collaborazione": 0.8,
   "competizione": 0.6,
   "collaboratore": 0.8,
   "collaboratori": 0.8,

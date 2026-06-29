@@ -2,17 +2,16 @@ import os
 import json
 import time
 import requests
-import random
 import re
+from google import genai
+from google.genai import types
 
 # ==========================================
-# CONFIGURAZIONI
+# CONFIGURAZIONI E VARIABILI D'AMBIENTE
 # ==========================================
-WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Il tuo Worker
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY") # ATTENZIONE: Ora è GROQ con la Q
+WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Controlla che sia il tuo vero URL
 HISTORY_FILE = "checked_ads.json"
-BATCH_SIZE = 10 
+BATCH_SIZE = 10 # Analizza 10 annunci per volta
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -49,8 +48,10 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
-def analyze_batch(ads_batch, provider):
-    prompt = """You are a strict Trust & Safety AI Sentinel for an Ad Network.
+def analyze_batch_with_retry(ads_batch, max_retries=5, initial_delay=10):
+    """Sfrutta il tuo codice infallibile per analizzare il batch con Gemini 2.5 Flash"""
+    
+    prompt = """You are a strict Trust & Safety AI Sentinel for a developer Ad Network.
 Analyze this batch of ads and check for policy violations.
 Rules for FLAG: NSFW/Porn, Violence, Scams, Malware, Phishing or Illegal activities.
 For each ad, you MUST reply with exactly this format on a new line:
@@ -63,53 +64,43 @@ Here is the batch to check:
     for ad in ads_batch:
         prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
-    print(f"🧠 Tentativo con {provider.upper()}...")
-    response_text = ""
+    print(f"🧠 Inviando batch di {len(ads_batch)} annunci a GEMINI 2.5 Flash...")
     
-    try:
-        if provider == 'groq':
-            # La vera API 100% gratuita di Groq.com (modello Llama 3)
-            headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}", 
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "llama3-8b-8192", 
-                "messages": [{"role": "user", "content": prompt}]
-            }
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
-            
-            if res.status_code == 200:
-                response_text = res.json()['choices'][0]['message']['content']
-            else:
-                print(f"⚠️ GROQ Errore {res.status_code}: {res.text}")
-                return None
+    # Inizializza il client esattamente come nel tuo repo funzionante
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    delay = initial_delay
+    response_text = ""
 
-        elif provider == 'gemini':
-            # Fallback su Gemini (se l'account Google non è bloccato)
-            models_to_try = ["gemini-1.5-flash", "gemini-1.5-flash-8b"]
-            success = False
-            for model_name in models_to_try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-                payload = {"contents": [{"parts": [{"text": prompt}]}]}
-                res = requests.post(url, json=payload, timeout=20)
-                
-                if res.status_code == 200:
-                    response_text = res.json()['candidates'][0]['content']['parts'][0]['text']
-                    success = True
-                    break
-                elif res.status_code == 429:
-                    print(f"⚠️ GEMINI ({model_name}): Quota esaurita o Limite a 0 (Blocco Europeo).")
-                    break # Inutile riprovare altri modelli se l'account è bloccato
-                else:
-                    print(f"⚠️ GEMINI ({model_name}): Errore {res.status_code}")
-                    continue
+    for attempt in range(max_retries):
+        try:
+            print(f"🔄 Tentativo {attempt + 1}/{max_retries}...")
             
-            if not success:
-                return None
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1, # Bassa per risposte molto rigide e precise
+                )
+            )
+            
+            if not response or not response.text:
+                raise ValueError("Risposta vuota dal modello")
                 
-    except Exception as e:
-        print(f"❌ Errore di rete con {provider}: {e}")
+            response_text = response.text.strip()
+            break # Usciamo dal loop dei tentativi se è andato a buon fine!
+
+        except Exception as e:
+            err_msg = str(e).upper()
+            print(f"⚠️ Errore API: {e}")
+            if any(x in err_msg for x in ["503", "429", "404", "UNAVAILABLE", "EXHAUSTED", "NONE", "RESOURCE_EXHAUSTED"]):
+                if attempt < max_retries - 1:
+                    print(f"🕒 Quota/Limite raggiunto temporaneamente. Riprovo in {delay}s...")
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+            return None # Se fallisce tutti i tentativi o c'è un errore fatale
+
+    if not response_text:
         return None
 
     # Estrazione dei risultati
@@ -127,6 +118,10 @@ Here is the batch to check:
     return results
 
 def run_sentinel():
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("❌ Nessuna API Key GEMINI configurata. Esco.")
+        return
+
     ads = get_ads_from_server()
     if not ads:
         print("📭 Nessun annuncio trovato nella rete. Esco.")
@@ -135,17 +130,9 @@ def run_sentinel():
     history = load_history()
     current_time = time.time()
     
+    # Ordiniamo: i nuovi annunci (0) vanno in cima
     ads.sort(key=lambda x: history.get(x['id'], 0))
     
-    available_ais = []
-    # Diamo priorità assoluta a Groq perché sappiamo che funziona ed è gratis
-    if GROQ_API_KEY: available_ais.append('groq')
-    if GEMINI_API_KEY: available_ais.append('gemini')
-    
-    if not available_ais:
-        print("❌ Nessuna API Key configurata. Esco.")
-        return
-
     max_ads_to_check = 50 
     ads_to_check = ads[:max_ads_to_check]
     batches = [ads_to_check[i:i + BATCH_SIZE] for i in range(0, len(ads_to_check), BATCH_SIZE)]
@@ -153,17 +140,10 @@ def run_sentinel():
     print(f"🔍 Sentinel: Analisi di {len(ads_to_check)} annunci in {len(batches)} batch.")
     
     for batch in batches:
-        batch_results = None
-        
-        # Prova prima Groq, se fallisce passa a Gemini
-        for ai_provider in available_ais:
-            batch_results = analyze_batch(batch, ai_provider)
-            if batch_results is not None:
-                print(f"✅ Batch analizzato con successo da {ai_provider.upper()}.")
-                break 
+        batch_results = analyze_batch_with_retry(batch)
         
         if batch_results is None:
-            print("❌ Tutti i provider AI hanno fallito per questo batch.")
+            print("❌ Analisi fallita per questo lotto dopo multipli tentativi.")
             continue
             
         for ad in batch:
@@ -173,12 +153,20 @@ def run_sentinel():
             if res and res['status'] == "FLAG":
                 flag_ad(ad_id, res['reason'])
             
+            # Aggiorniamo il timestamp di controllo per questo annuncio
             history[ad_id] = current_time
             
-        time.sleep(1) # Groq è velocissimo, basta 1 secondo di pausa
+        time.sleep(5) # Pausa tranquilla prima del prossimo batch
         
     save_history(history)
-    print("🏁 Controllo completato.")
+    print("🏁 Controllo completato con successo. Registro memoria aggiornato.")
+    
+    # Chiusura d'emergenza sicura per GitHub Actions
+    os._exit(0)
 
 if __name__ == "__main__":
-    run_sentinel()
+    try:
+        run_sentinel()
+    except Exception as e:
+        print(f"❌ Errore critico finale: {e}")
+        os._exit(1)

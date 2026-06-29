@@ -8,7 +8,7 @@ import re
 # ==========================================
 # CONFIGURAZIONI E VARIABILI D'AMBIENTE
 # ==========================================
-WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # SOSTITUISCI CON IL TUO VERO URL
+WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Sostituisci con il tuo Worker URL se diverso
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROK_API_KEY = os.environ.get("GROK_API_KEY")
 HISTORY_FILE = "checked_ads.json"
@@ -66,16 +66,21 @@ Here are the ads:
     for ad in ads_batch:
         prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
-    print(f"🧠 Inviando batch di {len(ads_batch)} annunci a {provider.upper()}...")
+    print(f"🧠 Inviando batch a {provider.upper()}...")
     
     response_text = ""
     
     try:
         if provider == 'gemini':
-            import google.generativeai as genai
-            genai.configure(api_key=GEMINI_API_KEY)
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
+            # Utilizzo del NUOVO SDK ufficiale google-genai
+            from google import genai
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            
+            # Utilizziamo gemini-2.0-flash per superare l'errore 404 del vecchio modello
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
             response_text = response.text
             
         elif provider == 'grok':
@@ -89,18 +94,16 @@ Here are the ads:
         print(f"❌ Errore API {provider}: {e}")
         return {}
 
-    # Parsing intelligente della risposta (estrae ID e verdetto usando regex)
+    # Parsing intelligente della risposta (estrae ID e verdetto)
     results = {}
     for ad in ads_batch:
         ad_id = ad['id']
-        # Cerca una riga che contiene l'ID seguito da PASS o FLAG
         match = re.search(rf"{ad_id}\s*(?:->|:|-)?\s*(FLAG|PASS)(.*)", response_text, re.IGNORECASE)
         if match:
             status = match.group(1).upper()
             reason = match.group(2).strip(" :->") if status == "FLAG" else ""
             results[ad_id] = {"status": status, "reason": reason}
         else:
-            # Se l'AI fa confusione, lo segniamo come passato per sicurezza
             results[ad_id] = {"status": "PASS", "reason": ""}
             
     return results
@@ -115,7 +118,6 @@ def run_sentinel():
     current_time = time.time()
     
     # Ordiniamo gli annunci: prima quelli MAI visti, poi quelli controllati più vecchi
-    # (Impostiamo 0 per chi non è in history, così vengono per primi)
     ads.sort(key=lambda x: history.get(x['id'], 0))
     
     available_ais = []
@@ -147,7 +149,7 @@ def run_sentinel():
             # Aggiorniamo lo storico con il timestamp attuale
             history[ad_id] = current_time
             
-        time.sleep(2) # Pausa tra un lotto e l'altro per i rate limits
+        time.sleep(2) # Pausa tra un lotto e l'altro
         
     save_history(history)
     print("✅ Controllo completato. Memoria aggiornata.")

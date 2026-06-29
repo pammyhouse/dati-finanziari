@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import requests
@@ -193,11 +194,11 @@ def run_sentinel():
         
     save_history(history)
     print("🏁 Controllo completato. Registro aggiornato.")
-    os._exit(0)
+    sys.exit(0) # <-- Uscita pulita invece di os._exit(0)
 
 if __name__ == "__main__":
     try:
         run_sentinel()
     except Exception as e:
         print(f"❌ Errore critico finale: {e}")
-        os._exit(1)
+        sys.exit(1) # <-- Uscita pulita con codice di errore

@@ -76,9 +76,9 @@ Here are the ads:
             from google import genai
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            # Utilizziamo gemini-2.0-flash per superare l'errore 404 del vecchio modello
+            # Usiamo gemini-1.5-flash che ha il Free Tier GARANTITO (1500 req/giorno)
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 contents=prompt,
             )
             response_text = response.text

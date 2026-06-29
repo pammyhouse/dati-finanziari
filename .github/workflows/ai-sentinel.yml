@@ -2,10 +2,12 @@ name: 24/7 AI Sentinel Audit
 
 on:
   schedule:
-    # Esegue lo script ogni 4 ore (alle 00:00, 04:00, 08:00, ecc.)
-    - cron: '0 */4 * * *'
-  # Permette di lanciare il controllo manualmente dal sito di GitHub
+    - cron: '0 */4 * * *' # Ogni 4 ore
   workflow_dispatch:
+
+# Permessi necessari per permettere alla action di fare commit del file json
+permissions:
+  contents: write
 
 jobs:
   audit_network:
@@ -27,9 +29,15 @@ jobs:
 
       - name: Esecuzione AI Sentinel
         env:
-          # Le API Key verranno passate dai Secret di GitHub
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python scripts/sentinel.py
+
+      - name: Salva il registro di sistema (Commit history)
+        run: |
+          git config --global user.name "AI Sentinel Bot"
+          git config --global user.email "sentinel@adswap.network"
+          git add checked_ads.json || true
+          git commit -m "Aggiornamento automatico registro Sentinel" || echo "Nessuna modifica da salvare"
+          git push

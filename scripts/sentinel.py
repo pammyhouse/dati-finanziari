@@ -8,11 +8,11 @@ import re
 # ==========================================
 # CONFIGURAZIONI E VARIABILI D'AMBIENTE
 # ==========================================
-WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Sostituisci con il tuo Worker URL se diverso
+WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Controlla che sia corretto
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROK_API_KEY = os.environ.get("GROK_API_KEY")
 HISTORY_FILE = "checked_ads.json"
-BATCH_SIZE = 10 # Analizza 10 annunci per ogni richiesta AI
+BATCH_SIZE = 10 
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -28,7 +28,6 @@ def save_history(history):
         json.dump(history, f, indent=4)
 
 def get_ads_from_server():
-    """Fa solo 2 chiamate al server per estrarre il massimo degli annunci disponibili"""
     ads_dict = {}
     print("📡 Contatto il server Cloudflare per scaricare gli annunci...")
     for fmt in ['banner', 'interstitial']:
@@ -43,7 +42,6 @@ def get_ads_from_server():
 
 def flag_ad(ad_id, reason):
     print(f"🚨 AD FLAGGATO! ID: {ad_id} | Motivo: {reason}")
-    # 3 report consecutivi faranno scattare il ban automatico sul tuo worker
     for _ in range(3):
         try:
             requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
@@ -52,8 +50,6 @@ def flag_ad(ad_id, reason):
         time.sleep(0.5)
 
 def analyze_batch(ads_batch, provider):
-    """Analizza un lotto di annunci con l'AI scelta"""
-    
     prompt = """You are a strict Trust & Safety AI Sentinel. Analyze this batch of ads.
 Rules for FLAG: NSFW/Porn, Violence, Scams, Malware, Phishing or Illegal activities.
 For each ad, you MUST reply with exactly this format on a new line:
@@ -66,35 +62,51 @@ Here are the ads:
     for ad in ads_batch:
         prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
-    print(f"🧠 Inviando batch a {provider.upper()}...")
+    print(f"🧠 Inviando batch a {provider.upper()} tramite REST API diretta...")
     
     response_text = ""
     
     try:
         if provider == 'gemini':
-            # Utilizzo del NUOVO SDK ufficiale google-genai
-            from google import genai
-            client = genai.Client(api_key=GEMINI_API_KEY)
+            # Chiamata REST diretta (Bypassiamo le librerie buggate di Google)
+            models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"]
+            success = False
             
-            # Usiamo gemini-1.5-flash che ha il Free Tier GARANTITO (1500 req/giorno)
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=prompt,
-            )
-            response_text = response.text
+            for model_name in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+                payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                
+                res = requests.post(url, json=payload, timeout=20)
+                
+                if res.status_code == 200:
+                    response_text = res.json()['candidates'][0]['content']['parts'][0]['text']
+                    success = True
+                    break # Usciamo dal ciclo, il modello ha funzionato!
+                elif res.status_code == 404:
+                    print(f"⚠️ {model_name} non trovato (404), provo il prossimo modello di fallback...")
+                    continue
+                else:
+                    print(f"❌ Errore API Gemini ({res.status_code}): {res.text}")
+                    break
             
+            if not success:
+                return {}
+
         elif provider == 'grok':
             headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
             payload = {"model": "grok-beta", "messages": [{"role": "user", "content": prompt}]}
             res = requests.post("https://api.x.ai/v1/chat/completions", headers=headers, json=payload, timeout=20)
             if res.status_code == 200:
                 response_text = res.json()['choices'][0]['message']['content']
+            else:
+                print(f"❌ Errore API Grok: {res.text}")
+                return {}
                 
     except Exception as e:
-        print(f"❌ Errore API {provider}: {e}")
+        print(f"❌ Errore Connessione {provider}: {e}")
         return {}
 
-    # Parsing intelligente della risposta (estrae ID e verdetto)
+    # Parsing dei risultati
     results = {}
     for ad in ads_batch:
         ad_id = ad['id']
@@ -117,7 +129,6 @@ def run_sentinel():
     history = load_history()
     current_time = time.time()
     
-    # Ordiniamo gli annunci: prima quelli MAI visti, poi quelli controllati più vecchi
     ads.sort(key=lambda x: history.get(x['id'], 0))
     
     available_ais = []
@@ -125,14 +136,11 @@ def run_sentinel():
     if GROK_API_KEY: available_ais.append('grok')
     
     if not available_ais:
-        print("❌ Nessuna API Key configurata. Esco.")
+        print("❌ Nessuna API Key configurata nei Secrets di GitHub. Esco.")
         return
 
-    # Prendiamo solo i primi N annunci per non consumare troppe risorse in una run
     max_ads_to_check = 50 
     ads_to_check = ads[:max_ads_to_check]
-    
-    # Dividiamo in lotti (batches)
     batches = [ads_to_check[i:i + BATCH_SIZE] for i in range(0, len(ads_to_check), BATCH_SIZE)]
     
     for batch in batches:
@@ -146,10 +154,9 @@ def run_sentinel():
             if res and res['status'] == "FLAG":
                 flag_ad(ad_id, res['reason'])
             
-            # Aggiorniamo lo storico con il timestamp attuale
             history[ad_id] = current_time
             
-        time.sleep(2) # Pausa tra un lotto e l'altro
+        time.sleep(2)
         
     save_history(history)
     print("✅ Controllo completato. Memoria aggiornata.")

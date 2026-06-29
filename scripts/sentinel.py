@@ -1,143 +1,156 @@
 import os
-import random
-import requests
+import json
 import time
+import requests
+import random
+import re
 
-# Configurazioni
-WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Sostituisci se diverso
+# ==========================================
+# CONFIGURAZIONI E VARIABILI D'AMBIENTE
+# ==========================================
+WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # SOSTITUISCI CON IL TUO VERO URL
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROK_API_KEY = os.environ.get("GROK_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+HISTORY_FILE = "checked_ads.json"
+BATCH_SIZE = 10 # Analizza 10 annunci per ogni richiesta AI
 
-PROMPT = """
-You are a strict Trust & Safety AI Sentinel for a B2B Developer Ad Network. 
-Analyze the following ad text and image.
-Rules for FLAG:
-1. NSFW, Pornographic, or sexually explicit content.
-2. Violence, gore, or illegal activities (drugs, weapons).
-3. Scam, deceptive behavior, malware, or phishing.
-4. If you have any doubt about its safety, be conservative and FLAG it.
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
-Reply ONLY with "PASS" if it is completely safe, or "FLAG: [Reason]" if it violates the rules.
+def save_history(history):
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=4)
 
-Ad Headline: {headline}
-Ad Description: {description}
-Destination URL: {url}
-"""
-
-def get_ads():
-    try:
-        # Peschiamo annunci banner e interstitial per analizzarli
-        ads = []
-        for fmt in ['banner', 'interstitial']:
-            res = requests.get(f"{WORKER_URL}/api/serve?format={fmt}&geo=global")
+def get_ads_from_server():
+    """Fa solo 2 chiamate al server per estrarre il massimo degli annunci disponibili"""
+    ads_dict = {}
+    print("📡 Contatto il server Cloudflare per scaricare gli annunci...")
+    for fmt in ['banner', 'interstitial']:
+        try:
+            res = requests.get(f"{WORKER_URL}/api/serve?format={fmt}&geo=global", timeout=10)
             if res.status_code == 200:
-                ads.extend(res.json().get('ads', []))
-        # Rimuoviamo i duplicati
-        return {ad['id']: ad for ad in ads}.values()
-    except Exception as e:
-        print(f"Errore nel fetch degli ads: {e}")
-        return []
+                for ad in res.json().get('ads', []):
+                    ads_dict[ad['id']] = ad
+        except Exception as e:
+            print(f"Errore fetch {fmt}: {e}")
+    return list(ads_dict.values())
 
 def flag_ad(ad_id, reason):
     print(f"🚨 AD FLAGGATO! ID: {ad_id} | Motivo: {reason}")
-    # Chiamiamo il report 3 volte per far scattare il ban immediato nel tuo worker
+    # 3 report consecutivi faranno scattare il ban automatico sul tuo worker
     for _ in range(3):
-        requests.post(f"{WORKER_URL}/api/report?id={ad_id}")
+        try:
+            requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
+        except:
+            pass
         time.sleep(0.5)
 
-def analyze_with_gemini(ad, image_bytes):
-    import google.generativeai as genai
-    genai.configure(api_key=GEMINI_API_KEY)
+def analyze_batch(ads_batch, provider):
+    """Analizza un lotto di annunci con l'AI scelta"""
     
-    # Usa Gemini 1.5 Flash (veloce, multimodale e con un piano gratuito generoso)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
-    prompt_text = PROMPT.format(
-        headline=ad.get('headline', ''), 
-        description=ad.get('description', ''), 
-        url=ad.get('destination_url', '')
-    )
-    
-    content = [prompt_text]
-    if image_bytes:
-        content.append({"mime_type": "image/jpeg", "data": image_bytes})
-        
-    response = model.generate_content(content)
-    return response.text.strip()
+    prompt = """You are a strict Trust & Safety AI Sentinel. Analyze this batch of ads.
+Rules for FLAG: NSFW/Porn, Violence, Scams, Malware, Phishing or Illegal activities.
+For each ad, you MUST reply with exactly this format on a new line:
+[ID] -> PASS
+or
+[ID] -> FLAG: [Brief Reason]
 
-def analyze_with_openai_compatible(ad, image_bytes, api_key, endpoint, model_name):
-    # Funzione generica per Grok o OpenAI usando la loro libreria o REST API
-    # Per semplicità, qui facciamo un'analisi solo testo se il modello non supporta bene le immagini via REST diretto
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+Here are the ads:
+"""
+    for ad in ads_batch:
+        prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
+
+    print(f"🧠 Inviando batch di {len(ads_batch)} annunci a {provider.upper()}...")
     
-    prompt_text = PROMPT.format(
-        headline=ad.get('headline', ''), 
-        description=ad.get('description', ''), 
-        url=ad.get('destination_url', '')
-    )
+    response_text = ""
     
-    payload = {
-        "model": model_name,
-        "messages": [{"role": "user", "content": prompt_text}],
-        "max_tokens": 50
-    }
-    
-    res = requests.post(endpoint, headers=headers, json=payload)
-    if res.status_code == 200:
-        return res.json()['choices'][0]['message']['content'].strip()
-    return "PASS" # Fallback sicuro in caso di errore API
+    try:
+        if provider == 'gemini':
+            import google.generativeai as genai
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            response_text = response.text
+            
+        elif provider == 'grok':
+            headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
+            payload = {"model": "grok-beta", "messages": [{"role": "user", "content": prompt}]}
+            res = requests.post("https://api.x.ai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+            if res.status_code == 200:
+                response_text = res.json()['choices'][0]['message']['content']
+                
+    except Exception as e:
+        print(f"❌ Errore API {provider}: {e}")
+        return {}
+
+    # Parsing intelligente della risposta (estrae ID e verdetto usando regex)
+    results = {}
+    for ad in ads_batch:
+        ad_id = ad['id']
+        # Cerca una riga che contiene l'ID seguito da PASS o FLAG
+        match = re.search(rf"{ad_id}\s*(?:->|:|-)?\s*(FLAG|PASS)(.*)", response_text, re.IGNORECASE)
+        if match:
+            status = match.group(1).upper()
+            reason = match.group(2).strip(" :->") if status == "FLAG" else ""
+            results[ad_id] = {"status": status, "reason": reason}
+        else:
+            # Se l'AI fa confusione, lo segniamo come passato per sicurezza
+            results[ad_id] = {"status": "PASS", "reason": ""}
+            
+    return results
 
 def run_sentinel():
-    ads = get_ads()
-    print(f"👁️ Sentinel attivato: Trovati {len(ads)} annunci da analizzare.")
+    ads = get_ads_from_server()
+    if not ads:
+        print("Nessun annuncio trovato. Esco.")
+        return
+
+    history = load_history()
+    current_time = time.time()
     
-    # Determina quali AI sono disponibili
+    # Ordiniamo gli annunci: prima quelli MAI visti, poi quelli controllati più vecchi
+    # (Impostiamo 0 per chi non è in history, così vengono per primi)
+    ads.sort(key=lambda x: history.get(x['id'], 0))
+    
     available_ais = []
     if GEMINI_API_KEY: available_ais.append('gemini')
     if GROK_API_KEY: available_ais.append('grok')
-    if OPENAI_API_KEY: available_ais.append('openai')
     
     if not available_ais:
-        print("Nessuna API Key configurata. Esco.")
+        print("❌ Nessuna API Key configurata. Esco.")
         return
 
-    for ad in ads:
-        # Scarica l'immagine se esiste
-        image_bytes = None
-        if ad.get('media_url'):
-            try:
-                img_res = requests.get(ad['media_url'], timeout=5)
-                if img_res.status_code == 200:
-                    image_bytes = img_res.content
-            except:
-                pass
-                
-        # Scegli un'AI a caso per questo annuncio
+    # Prendiamo solo i primi N annunci per non consumare troppe risorse in una run
+    max_ads_to_check = 50 
+    ads_to_check = ads[:max_ads_to_check]
+    
+    # Dividiamo in lotti (batches)
+    batches = [ads_to_check[i:i + BATCH_SIZE] for i in range(0, len(ads_to_check), BATCH_SIZE)]
+    
+    for batch in batches:
         chosen_ai = random.choice(available_ais)
-        print(f"Analizzo annuncio {ad['id']} con {chosen_ai.upper()}...")
+        results = analyze_batch(batch, chosen_ai)
         
-        try:
-            result = ""
-            if chosen_ai == 'gemini':
-                result = analyze_with_gemini(ad, image_bytes)
-            elif chosen_ai == 'grok':
-                result = analyze_with_openai_compatible(ad, image_bytes, GROK_API_KEY, "https://api.x.ai/v1/chat/completions", "grok-beta")
-            elif chosen_ai == 'openai':
-                result = analyze_with_openai_compatible(ad, image_bytes, OPENAI_API_KEY, "https://api.openai.com/v1/chat/completions", "gpt-4o-mini")
-                
-            if result.startswith("FLAG"):
-                flag_ad(ad['id'], result)
-            else:
-                print("✅ PASS")
-                
-        except Exception as e:
-            print(f"Errore durante l'analisi dell'annuncio {ad['id']}: {e}")
+        for ad in batch:
+            ad_id = ad['id']
+            res = results.get(ad_id)
             
-        time.sleep(2) # Pausa per non saturare i rate limit gratuiti
+            if res and res['status'] == "FLAG":
+                flag_ad(ad_id, res['reason'])
+            
+            # Aggiorniamo lo storico con il timestamp attuale
+            history[ad_id] = current_time
+            
+        time.sleep(2) # Pausa tra un lotto e l'altro per i rate limits
+        
+    save_history(history)
+    print("✅ Controllo completato. Memoria aggiornata.")
 
 if __name__ == "__main__":
     run_sentinel()

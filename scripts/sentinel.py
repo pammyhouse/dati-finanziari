@@ -133,32 +133,33 @@ def analyze_multimedia_ad(ad):
             print(f"⚠️ Impossibile scaricare il media per {ad['id']}.")
             return None
             
-        # RISOLUZIONE DEL BUG: Estraiamo il Mime-Type corretto dagli header HTTP
-        mime_type = res.headers.get("Content-Type")
-        if not mime_type or "/" not in mime_type:
-            # Fallback euristico di emergenza se il server non risponde correttamente
-            if media_url.endswith('.mp4'): mime_type = 'video/mp4'
-            elif media_url.endswith('.png'): mime_type = 'image/png'
-            elif media_url.endswith('.gif'): mime_type = 'image/gif'
-            else: mime_type = 'image/jpeg'
+        mime_type = res.headers.get("Content-Type") or ""
+        
+        # RISOLUZIONE BUG: Ricaviamo l'estensione corretta
+        ext = '.jpg' # fallback predefinito
+        if 'png' in mime_type.lower(): ext = '.png'
+        elif 'gif' in mime_type.lower(): ext = '.gif'
+        elif 'mp4' in mime_type.lower() or media_url.endswith('.mp4'): ext = '.mp4'
+        elif 'webp' in mime_type.lower(): ext = '.webp'
             
-        print(f"📋 Mime-Type rilevato correttamente: {mime_type}")
+        print(f"📋 File riconosciuto come {ext}")
     except Exception as e:
         print(f"❌ Errore download asset: {e}")
         return None
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    # Creiamo il file temporaneo assegnandogli l'ESTENSIONE vera, così l'SDK lo capisce da solo!
+    temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     temp_file.write(res.content)
     temp_file.close()
 
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # RISOLUZIONE DEL BUG: Passiamo esplicitamente il mime_type estratto a Google
-        uploaded_file = client.files.upload(file=temp_file.name, mime_type=mime_type)
+        # Caricamento pulito senza l'argomento incompatibile
+        uploaded_file = client.files.upload(file=temp_file.name)
         
-        if "video" in mime_type or media_url.endswith(".mp4"):
-            time.sleep(2.5)
+        if ext == '.mp4':
+            time.sleep(2.5) # Diamogli tempo di elaborare il video
 
         prompt = POLICY_PROMPT + f"""
 Here is the single multimedia ad content to review:
@@ -182,7 +183,6 @@ Reply EXACTLY with "PASS" if everything (text, media, and destination URL) is co
         response_text = response.text.strip().upper()
         
         if "FLAG" in response_text:
-            # Estrae il motivo
             reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
             reason = reason_match.group(1).strip() if reason_match else "Policy Violation"
             return {"status": "FLAG", "reason": reason}
@@ -213,7 +213,6 @@ def run_sentinel():
     history = load_history()
     current_time = time.time()
     
-    # Ordiniamo gli annunci dando priorità assoluta a quelli non controllati
     ads.sort(key=lambda x: history.get(x['id'], 0))
     ads_to_check = ads[:40] 
     
@@ -222,7 +221,6 @@ def run_sentinel():
     
     print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
 
-    # --- FASE 1: GESTIONE CODA SOLO TESTO + URL (Batch) ---
     if ads_text_only:
         available_ais = []
         if GROQ_API_KEY: available_ais.append('groq')
@@ -243,7 +241,6 @@ def run_sentinel():
                     break 
             time.sleep(2)
 
-    # --- FASE 2: GESTIONE CODA MULTIMEDIALE + URL (Singoli) ---
     if ads_with_media:
         print("🎬 Inizio analisi annunci multimediali (Testo + Media + URL)...")
         for ad in ads_with_media:

@@ -34,13 +34,12 @@ def save_history(history):
         json.dump(history, f, indent=4)
 
 def get_ad_hash(ad):
-    """Crea un'impronta digitale dell'annuncio. Se l'utente modifica qualcosa, l'hash cambia e viene ricontrollato."""
     content = f"{ad.get('headline', '')}{ad.get('description', '')}{ad.get('media_url', '')}{ad.get('destination_url', '')}"
     return hashlib.md5(content.encode('utf-8')).hexdigest()
 
 def get_ads_from_server():
     if not SENTINEL_SECRET_KEY:
-        print("❌ SENTINEL_KEY non configurata nei secrets. Accesso totale negato.")
+        print("❌ SENTINEL_KEY non configurata. Accesso negato.")
         return []
 
     print("📡 Download TOTALE annunci dal server (Bypass crediti/sospensioni)...")
@@ -100,7 +99,6 @@ def analyze_text_batch(ads_batch, provider):
                 response_text = res.json()['choices'][0]['message']['content']
             else:
                 return None
-
         elif provider == 'gemini':
             client = genai.Client(api_key=GEMINI_API_KEY)
             response = client.models.generate_content(
@@ -130,10 +128,10 @@ def analyze_text_batch(ads_batch, provider):
     return results
 
 # ==========================================
-# MOTORE 2: ANALISI MULTIMEDIALE + URL
+# MOTORE 2: ANALISI MULTIMEDIALE (CON RETRY INFALLIBILE)
 # ==========================================
 def analyze_multimedia_ad(ad):
-    print(f"🖼️ [MEDIA + URL] Inizio analisi multimodale per ID: {ad['id']}")
+    print(f"🖼️ [MEDIA + URL] Inizio analisi per ID: {ad['id']}")
     
     media_url = ad.get('media_url')
     if not media_url: return None
@@ -158,13 +156,15 @@ def analyze_multimedia_ad(ad):
     temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     temp_file.write(res.content)
     temp_file.close()
+    
+    uploaded_file = None
 
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         uploaded_file = client.files.upload(file=temp_file.name)
         
         if ext == '.mp4':
-            time.sleep(2.5) 
+            time.sleep(3) 
 
         prompt = POLICY_PROMPT + f"""
 Here is the single multimedia ad content to review:
@@ -174,31 +174,51 @@ Destination URL: {ad.get('destination_url','')}
 
 Reply EXACTLY with "PASS" if everything (text, media, and destination URL) is compliant, or "FLAG: [Reason]" if anything violates the rules."""
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[uploaded_file, prompt],
-            config=types.GenerateContentConfig(temperature=0.1)
-        )
+        # SISTEMA DI RETRY PER GESTIRE 429 e 503
+        max_retries = 4
+        delay = 15 # Attesa base di 15 secondi
         
-        try:
-            client.files.delete(name=uploaded_file.name)
-        except:
-            pass
-
-        response_text = response.text.strip().upper()
-        
-        if "FLAG" in response_text:
-            reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
-            reason = reason_match.group(1).strip() if reason_match else "Policy Violation"
-            return {"status": "FLAG", "reason": reason}
-        else:
-            return {"status": "PASS", "reason": ""}
-
-    except Exception as e:
-        print(f"❌ Errore API Gemini Multimodale per {ad['id']}: {e}")
-        return None
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=[uploaded_file, prompt],
+                    config=types.GenerateContentConfig(temperature=0.1)
+                )
+                
+                # SE LA RISPOSTA È VUOTA (Blocco di Sicurezza Google)
+                if not response or not response.text:
+                    return {"status": "FLAG", "reason": "BLOCKED_BY_GOOGLE_SAFETY (Extreme Content: Pornography/Gore detected by API)"}
+                
+                response_text = response.text.strip().upper()
+                
+                if "FLAG" in response_text:
+                    reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
+                    reason = reason_match.group(1).strip() if reason_match else "Policy Violation"
+                    return {"status": "FLAG", "reason": reason}
+                else:
+                    return {"status": "PASS", "reason": ""}
+                    
+            except Exception as e:
+                err_msg = str(e).upper()
+                # Se è un errore di Rate Limit o Server Occupato, riprova
+                if any(x in err_msg for x in ["503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"]):
+                    if attempt < max_retries - 1:
+                        print(f"🕒 Limite Gemini raggiunto (429/503). Attendo {delay}s e riprovo...")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                
+                print(f"❌ Errore API Gemini Multimodale per {ad['id']}: {e}")
+                return None
+                
+        return None # Se fallisce tutti i tentativi
         
     finally:
+        # PULIZIA SICURA
+        if uploaded_file:
+            try: client.files.delete(name=uploaded_file.name)
+            except: pass
         if os.path.exists(temp_file.name):
             os.remove(temp_file.name)
 
@@ -218,7 +238,6 @@ def run_sentinel():
     history = load_history()
     current_time = time.time()
     
-    # 🧠 FILTRO HASH INTELLIGENTE: Elimina chi è già stato controllato e NON ha subito modifiche
     ads_to_check = []
     for ad in ads:
         ad_hash = get_ad_hash(ad)
@@ -227,18 +246,18 @@ def run_sentinel():
             ads_to_check.append(ad)
 
     if not ads_to_check:
-        print("✅ Tutti gli annunci sono puliti e già stati verificati. Nessuna modifica rilevata.")
+        print("✅ Tutti gli annunci sono puliti e già stati verificati.")
         sys.exit(0)
 
-    # Ordinamento casuale garantito dalla presenza dell'import random
     random.shuffle(ads_to_check)
     
-    ads_to_check = ads_to_check[:40] 
+    # Riduciamo il lotto a 30 per sicurezza per non sforare i token massimi 
+    ads_to_check = ads_to_check[:30] 
     
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
     ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
     
-    print(f"🔍 Sentinel attivato. Da analizzare (Nuovi/Modificati): {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
+    print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
 
     if ads_text_only:
         available_ais = []
@@ -272,10 +291,10 @@ def run_sentinel():
             else:
                 print(f"⚠️ Analisi fallita per {ad['id']}. Riproverò alla prossima esecuzione.")
                 
-            time.sleep(3)
+            time.sleep(2)
             
     save_history(history)
-    print("🏁 Controllo completato. Registro aggiornato con i nuovi Hash.")
+    print("🏁 Controllo completato. Registro aggiornato.")
     sys.exit(0)
 
 if __name__ == "__main__":

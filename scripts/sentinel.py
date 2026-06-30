@@ -7,6 +7,7 @@ import re
 import tempfile
 import sys
 import hashlib
+import base64
 from google import genai
 from google.genai import types
 
@@ -64,9 +65,6 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
-# ==========================================
-# PROMPT TUNING: SEVERO MA TOLLERANTE SUL MARKETING
-# ==========================================
 POLICY_PROMPT = """You are a Trust & Safety AI Sentinel. 
 Your ONLY job is to catch SEVERE Tier-1 violations. DO NOT act as a strict marketing compliance officer.
 
@@ -105,15 +103,6 @@ def analyze_text_batch(ads_batch, provider):
                 response_text = res.json()['choices'][0]['message']['content']
             else:
                 return None
-        elif provider == 'gemini':
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            response = client.models.generate_content(
-                model='gemini-2.0-flash', 
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.1)
-            )
-            response_text = response.text
-                
     except Exception as e:
         print(f"❌ Errore rete con {provider}: {e}")
         return None
@@ -156,6 +145,57 @@ def analyze_multimedia_ad(ad):
         print(f"❌ Errore download asset: {e}")
         return None
 
+    is_video = 'video' in mime_type or ext == '.mp4'
+    single_ad_prompt = POLICY_PROMPT + f"""
+Here is the single multimedia ad content to review:
+Ad Headline: {ad.get('headline','')}
+Ad Description: {ad.get('description','')}
+Destination URL: {ad.get('destination_url','')}
+
+Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it violates the Tier-1 rules."""
+
+    # ========================================================
+    # STRADA 1: IMMAGINI (Usiamo GROQ VISION, 100% Gratis e Veloce)
+    # ========================================================
+    if not is_video and GROQ_API_KEY:
+        print("👁️ Utilizzo GROQ Vision per l'immagine...")
+        try:
+            base64_image = base64.b64encode(res.content).decode('utf-8')
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "llama-3.2-11b-vision-preview",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": single_ad_prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
+                    ]
+                }],
+                "temperature": 0.1
+            }
+            
+            vision_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+            
+            if vision_res.status_code == 200:
+                response_text = vision_res.json()['choices'][0]['message']['content'].strip().upper()
+                if "FLAG" in response_text:
+                    reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
+                    reason = reason_match.group(1).strip() if reason_match else "Policy Violation"
+                    return {"status": "FLAG", "reason": reason}
+                else:
+                    return {"status": "PASS", "reason": ""}
+            else:
+                print(f"⚠️ Errore Groq Vision ({vision_res.status_code}). Fallback su Gemini...")
+        except Exception as e:
+            print(f"⚠️ Errore Groq Vision: {e}. Fallback su Gemini...")
+
+    # ========================================================
+    # STRADA 2: VIDEO O FALLBACK (Usiamo GEMINI 2.5 FLASH)
+    # ========================================================
+    if not GEMINI_API_KEY:
+        return None
+
+    print(f"🎥 Utilizzo GEMINI 2.5 Flash per il file multimediale...")
     temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     temp_file.write(res.content)
     temp_file.close()
@@ -166,25 +206,18 @@ def analyze_multimedia_ad(ad):
         client = genai.Client(api_key=GEMINI_API_KEY)
         uploaded_file = client.files.upload(file=temp_file.name)
         
-        if ext == '.mp4':
+        if is_video:
             time.sleep(3) 
 
-        prompt = POLICY_PROMPT + f"""
-Here is the single multimedia ad content to review:
-Ad Headline: {ad.get('headline','')}
-Ad Description: {ad.get('description','')}
-Destination URL: {ad.get('destination_url','')}
-
-Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it violates the Tier-1 rules."""
-
-        max_retries = 4
-        delay = 15 
+        max_retries = 3
+        delay = 10 
         
         for attempt in range(max_retries):
             try:
+                # Usiamo 2.5-flash perché sappiamo che sul tuo account funziona (anche se limitato a 20/day)
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash',
-                    contents=[uploaded_file, prompt],
+                    model='gemini-2.5-flash',
+                    contents=[uploaded_file, single_ad_prompt],
                     config=types.GenerateContentConfig(temperature=0.1)
                 )
                 
@@ -209,7 +242,7 @@ Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it viola
                         delay *= 2
                         continue
                 
-                print(f"❌ Errore API Gemini Multimodale per {ad['id']}: {e}")
+                print(f"❌ Errore API Gemini Multimodale: {e}")
                 return None
                 
         return None 
@@ -221,11 +254,10 @@ Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it viola
         if os.path.exists(temp_file.name):
             os.remove(temp_file.name)
 
+# ==========================================
+# GESTORE CENTRALE
+# ==========================================
 def run_sentinel():
-    if not GEMINI_API_KEY:
-        print("❌ API Key GEMINI mancante! Esco.")
-        return
-
     ads = get_ads_from_server()
     if not ads:
         print("📭 Nessun annuncio trovato nel database globale. Esco.")
@@ -251,30 +283,23 @@ def run_sentinel():
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
     ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
     
-    print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
+    print(f"🔍 Sentinel attivato. Da analizzare (Solo Nuovi/Modificati): {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
 
     if ads_text_only:
-        available_ais = []
-        if GROQ_API_KEY: available_ais.append('groq')
-        available_ais.append('gemini')
-
         batches = [ads_text_only[i:i + BATCH_SIZE] for i in range(0, len(ads_text_only), BATCH_SIZE)]
-        
         for batch in batches:
-            for ai_provider in available_ais:
-                results = analyze_text_batch(batch, ai_provider)
-                if results is not None:
-                    print(f"✅ Batch testo/URL analizzato con {ai_provider.upper()}.")
-                    for ad in batch:
-                        res = results.get(ad['id'])
-                        if res and res['status'] == "FLAG":
-                            flag_ad(ad['id'], res['reason'])
-                        if res: history[ad['hash_signature']] = current_time
-                    break 
+            results = analyze_text_batch(batch, 'groq')
+            if results is not None:
+                print(f"✅ Batch testo/URL analizzato con GROQ.")
+                for ad in batch:
+                    res = results.get(ad['id'])
+                    if res and res['status'] == "FLAG":
+                        flag_ad(ad['id'], res['reason'])
+                    if res: history[ad['hash_signature']] = current_time
             time.sleep(2)
 
     if ads_with_media:
-        print("🎬 Inizio analisi annunci multimediali (Testo + Media + URL)...")
+        print("🎬 Inizio analisi annunci multimediali...")
         for ad in ads_with_media:
             res = analyze_multimedia_ad(ad)
             

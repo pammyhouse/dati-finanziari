@@ -1,10 +1,10 @@
 import os
-import sys
 import json
 import time
 import requests
 import random
 import re
+import tempfile
 from google import genai
 from google.genai import types
 
@@ -15,7 +15,7 @@ WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Controlla che sia corre
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 HISTORY_FILE = "checked_ads.json"
-BATCH_SIZE = 10 
+BATCH_SIZE = 10
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -52,9 +52,11 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
-def analyze_batch_with_retry(ads_batch, provider, max_retries=3, initial_delay=5):
-    prompt = """You are a strict Trust & Safety AI Sentinel for a developer Ad Network.
-Analyze this batch of ads and check for policy violations.
+# ==========================================
+# MOTORE 1: ANALISI SOLO TESTO (IN BATCH)
+# ==========================================
+def analyze_text_batch(ads_batch, provider):
+    prompt = """You are a strict Trust & Safety AI Sentinel. Analyze this batch of ads.
 Rules for FLAG: NSFW/Porn, Violence, Scams, Malware, Phishing or Illegal activities.
 For each ad, you MUST reply with exactly this format on a new line:
 [ID] -> PASS
@@ -66,68 +68,34 @@ Here is the batch to check:
     for ad in ads_batch:
         prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
-    print(f"🧠 Inviando batch a {provider.upper()}...")
-    
-    delay = initial_delay
+    print(f"🧠 [TESTO] Inviando batch a {provider.upper()}...")
     response_text = ""
+    
+    try:
+        if provider == 'groq':
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+            payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+            if res.status_code == 200:
+                response_text = res.json()['choices'][0]['message']['content']
+            else:
+                return None
 
-    for attempt in range(max_retries):
-        try:
-            if provider == 'groq':
-                # Implementazione Ufficiale GROQ aggiornata ai nuovi modelli Llama 3.1
-                headers = {
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": "llama-3.1-8b-instant", # IL MODELLO NUOVO E SUPPORTATO
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1
-                }
-                res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+        elif provider == 'gemini':
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.1)
+            )
+            response_text = response.text
                 
-                if res.status_code == 200:
-                    response_text = res.json()['choices'][0]['message']['content']
-                    break
-                else:
-                    err_msg = res.text
-                    print(f"⚠️ GROQ Errore {res.status_code}: {err_msg}")
-                    if res.status_code == 429:
-                        print(f"🕒 Rate limit Groq, attendo {delay}s...")
-                        time.sleep(delay)
-                        delay *= 2
-                        continue
-                    else:
-                        return None # Altri errori fatali (es. 401 Auth)
-
-            elif provider == 'gemini':
-                # Implementazione GEMINI 2.5 presa dal tuo codice funzionante
-                client = genai.Client(api_key=GEMINI_API_KEY)
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash', 
-                    contents=prompt,
-                    config=types.GenerateContentConfig(temperature=0.1)
-                )
-                if not response or not response.text:
-                    raise ValueError("Risposta vuota dal modello")
-                response_text = response.text
-                break
-
-        except Exception as e:
-            err_msg = str(e).upper()
-            print(f"⚠️ Errore {provider.upper()}: {e}")
-            if any(x in err_msg for x in ["503", "429", "404", "UNAVAILABLE", "EXHAUSTED", "NONE"]):
-                if attempt < max_retries - 1:
-                    print(f"🕒 Riprovo in {delay}s...")
-                    time.sleep(delay)
-                    delay *= 2
-                    continue
-            return None 
-
-    if not response_text:
+    except Exception as e:
+        print(f"❌ Errore rete con {provider}: {e}")
         return None
 
-    # Estrazione dei risultati
+    if not response_text: return None
+
     results = {}
     for ad in ads_batch:
         ad_id = ad['id']
@@ -141,13 +109,85 @@ Here is the batch to check:
             
     return results
 
-def run_sentinel():
-    available_ais = []
-    if GROQ_API_KEY: available_ais.append('groq')
-    if GEMINI_API_KEY: available_ais.append('gemini')
+# ==========================================
+# MOTORE 2: ANALISI MULTIMEDIALE (SINGOLA)
+# ==========================================
+def analyze_multimedia_ad(ad):
+    """Scarica il media e lo invia a Gemini insieme ai testi dell'annuncio."""
+    print(f"🖼️ [MEDIA] Inizio analisi multimodale per ID: {ad['id']}")
     
-    if not available_ais:
-        print("❌ Nessuna API Key configurata. Esco.")
+    media_url = ad.get('media_url')
+    if not media_url: return None
+
+    # 1. Scarica il file in una cartella temporanea sicura
+    try:
+        res = requests.get(media_url, timeout=10)
+        if res.status_code != 200:
+            print(f"⚠️ Impossibile scaricare il media per {ad['id']}.")
+            return None # Ritorna None così non viene segnato come controllato
+    except:
+        return None
+
+    # Salva il file localmente
+    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    temp_file.write(res.content)
+    temp_file.close()
+
+    try:
+        # 2. Carica il file su Google Gemini
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        uploaded_file = client.files.upload(file=temp_file.name)
+        
+        # Se è un video, diamo 2 secondi a Gemini per processarlo lato server
+        if "video" in res.headers.get("Content-Type", "") or media_url.endswith(".mp4"):
+            time.sleep(2)
+
+        # 3. Chiedi a Gemini di analizzare TUTTO (File + Testo)
+        prompt = f"""You are a strict Trust & Safety AI Sentinel.
+Analyze the attached media file AND the following text associated with it.
+Rules for FLAG: NSFW/Porn, Violence, Scams, Malware, Phishing or Illegal activities.
+
+Ad Headline: {ad.get('headline','')}
+Ad Description: {ad.get('description','')}
+Destination URL: {ad.get('destination_url','')}
+
+Reply EXACTLY with a single word "PASS" if everything is safe, or "FLAG: [Brief Reason]" if the media or text violate policies."""
+
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[uploaded_file, prompt],
+            config=types.GenerateContentConfig(temperature=0.1)
+        )
+        
+        # 4. Pulizia: Cancella il file dai server di Google
+        try:
+            client.files.delete(name=uploaded_file.name)
+        except:
+            pass
+
+        response_text = response.text.strip().upper()
+        
+        if response_text.startswith("FLAG"):
+            reason = response_text.replace("FLAG:", "").strip()
+            return {"status": "FLAG", "reason": reason}
+        else:
+            return {"status": "PASS", "reason": ""}
+
+    except Exception as e:
+        print(f"❌ Errore durante l'analisi multimodale di {ad['id']}: {e}")
+        return None
+        
+    finally:
+        # Pulizia: Cancella il file dal server GitHub
+        if os.path.exists(temp_file.name):
+            os.remove(temp_file.name)
+
+# ==========================================
+# GESTORE CENTRALE
+# ==========================================
+def run_sentinel():
+    if not GEMINI_API_KEY:
+        print("❌ API Key GEMINI mancante! Obbligatoria per i controlli multimediali. Esco.")
         return
 
     ads = get_ads_from_server()
@@ -158,47 +198,64 @@ def run_sentinel():
     history = load_history()
     current_time = time.time()
     
-    # Priorità agli annunci mai visti o visti da più tempo
+    # 🧠 ORDINAMENTO: I nuovi annunci (o quelli mai controllati) vengono prima.
     ads.sort(key=lambda x: history.get(x['id'], 0))
     
-    max_ads_to_check = 50 
-    ads_to_check = ads[:max_ads_to_check]
-    batches = [ads_to_check[i:i + BATCH_SIZE] for i in range(0, len(ads_to_check), BATCH_SIZE)]
+    # Limita a 40 annunci totali per non sforare i tempi di esecuzione
+    ads_to_check = ads[:40] 
     
-    print(f"🔍 Sentinel: Analisi di {len(ads_to_check)} annunci in {len(batches)} batch.")
+    # SEPARAZIONE DELLE CODE
+    ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
+    ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
     
-    for batch in batches:
-        batch_results = None
+    print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
+
+    # --- FASE 1: GESTIONE CODA SOLO TESTO (Batch) ---
+    if ads_text_only:
+        available_ais = []
+        if GROQ_API_KEY: available_ais.append('groq')
+        available_ais.append('gemini')
+
+        batches = [ads_text_only[i:i + BATCH_SIZE] for i in range(0, len(ads_text_only), BATCH_SIZE)]
         
-        # Prova i provider disponibili finché uno non funziona
-        for ai_provider in available_ais:
-            batch_results = analyze_batch_with_retry(batch, ai_provider)
-            if batch_results is not None:
-                print(f"✅ Batch analizzato con successo da {ai_provider.upper()}.")
-                break 
-        
-        if batch_results is None:
-            print("❌ Tutti i provider AI hanno fallito per questo batch.")
-            continue
+        for batch in batches:
+            for ai_provider in available_ais:
+                results = analyze_text_batch(batch, ai_provider)
+                if results is not None:
+                    print(f"✅ Batch testo analizzato con {ai_provider.upper()}.")
+                    for ad in batch:
+                        res = results.get(ad['id'])
+                        if res and res['status'] == "FLAG":
+                            flag_ad(ad['id'], res['reason'])
+                        # Salva in history solo se il controllo è andato a buon fine
+                        if res: history[ad['id']] = current_time
+                    break # Esce dal loop dei provider
+            time.sleep(2)
+
+    # --- FASE 2: GESTIONE CODA MULTIMEDIALE (Singoli) ---
+    if ads_with_media:
+        print("🎬 Inizio analisi annunci multimediali (Testo + Media)...")
+        for ad in ads_with_media:
+            res = analyze_multimedia_ad(ad)
             
-        for ad in batch:
-            ad_id = ad['id']
-            res = batch_results.get(ad_id)
+            if res is not None:
+                if res['status'] == "FLAG":
+                    flag_ad(ad['id'], res['reason'])
+                # L'annuncio viene segnato come controllato SOLO ORA, dopo che
+                # Gemini ha letto contemporaneamente Testi + Video/Immagine.
+                history[ad['id']] = current_time
+            else:
+                print(f"⚠️ Analisi fallita per {ad['id']}. Riproverò alla prossima esecuzione.")
+                
+            time.sleep(3) # Pausa tra un file multimediale e l'altro
             
-            if res and res['status'] == "FLAG":
-                flag_ad(ad_id, res['reason'])
-            
-            history[ad_id] = current_time
-            
-        time.sleep(2) 
-        
     save_history(history)
     print("🏁 Controllo completato. Registro aggiornato.")
-    sys.exit(0) # <-- Uscita pulita invece di os._exit(0)
 
 if __name__ == "__main__":
+    import sys
     try:
         run_sentinel()
     except Exception as e:
         print(f"❌ Errore critico finale: {e}")
-        sys.exit(1) # <-- Uscita pulita con codice di errore
+        sys.exit(1)

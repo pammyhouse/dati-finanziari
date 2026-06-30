@@ -2,10 +2,10 @@ import os
 import json
 import time
 import requests
-import random
 import re
 import tempfile
 import sys
+import hashlib
 from google import genai
 from google.genai import types
 
@@ -15,6 +15,7 @@ from google.genai import types
 WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY") # <-- LEGGE LA SECRET DI GITHUB
 HISTORY_FILE = "checked_ads.json"
 BATCH_SIZE = 10
 
@@ -31,18 +32,28 @@ def save_history(history):
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=4)
 
+def get_ad_hash(ad):
+    """Crea un'impronta digitale dell'annuncio. Se l'utente modifica qualcosa, l'hash cambia e viene ricontrollato."""
+    content = f"{ad.get('headline', '')}{ad.get('description', '')}{ad.get('media_url', '')}{ad.get('destination_url', '')}"
+    return hashlib.md5(content.encode('utf-8')).hexdigest()
+
 def get_ads_from_server():
-    ads_dict = {}
-    print("📡 Download annunci dal server Cloudflare...")
-    for fmt in ['banner', 'interstitial']:
-        try:
-            res = requests.get(f"{WORKER_URL}/api/serve?format={fmt}&geo=global", timeout=10)
-            if res.status_code == 200:
-                for ad in res.json().get('ads', []):
-                    ads_dict[ad['id']] = ad
-        except Exception as e:
-            print(f"Errore connessione Cloudflare ({fmt}): {e}")
-    return list(ads_dict.values())
+    if not SENTINEL_SECRET_KEY:
+        print("❌ SENTINEL_KEY non configurata nei secrets. Accesso totale negato.")
+        return []
+
+    print("📡 Download TOTALE annunci dal server (Bypass crediti/sospensioni)...")
+    headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
+    try:
+        res = requests.get(f"{WORKER_URL}/api/admin/serve_all", headers=headers, timeout=20)
+        if res.status_code == 200:
+            return res.json().get('ads', [])
+        else:
+            print(f"❌ Errore Autorizzazione Worker: {res.status_code}")
+            return []
+    except Exception as e:
+        print(f"❌ Errore connessione Cloudflare: {e}")
+        return []
 
 def flag_ad(ad_id, reason):
     print(f"🚨 AD FLAGGATO! ID: {ad_id} | Motivo: {reason}")
@@ -53,7 +64,6 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
-# SYSTEM PROMPT CONDIVISO CON FOCUS SULLA VERIFICA DEGLI URL
 POLICY_PROMPT = """You are a strict Trust & Safety AI Sentinel for an Ad Network.
 Analyze the given content and check for policy violations.
 
@@ -70,7 +80,7 @@ or
 """
 
 # ==========================================
-# MOTORE 1: ANALISI SOLO TESTO (IN BATCH)
+# MOTORE 1: ANALISI SOLO TESTO E URL
 # ==========================================
 def analyze_text_batch(ads_batch, provider):
     prompt = POLICY_PROMPT + "\nHere is the batch of text-only ads to check:\n"
@@ -134,32 +144,26 @@ def analyze_multimedia_ad(ad):
             return None
             
         mime_type = res.headers.get("Content-Type") or ""
-        
-        # RISOLUZIONE BUG: Ricaviamo l'estensione corretta
-        ext = '.jpg' # fallback predefinito
+        ext = '.jpg' 
         if 'png' in mime_type.lower(): ext = '.png'
         elif 'gif' in mime_type.lower(): ext = '.gif'
         elif 'mp4' in mime_type.lower() or media_url.endswith('.mp4'): ext = '.mp4'
         elif 'webp' in mime_type.lower(): ext = '.webp'
             
-        print(f"📋 File riconosciuto come {ext}")
     except Exception as e:
         print(f"❌ Errore download asset: {e}")
         return None
 
-    # Creiamo il file temporaneo assegnandogli l'ESTENSIONE vera, così l'SDK lo capisce da solo!
     temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     temp_file.write(res.content)
     temp_file.close()
 
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        
-        # Caricamento pulito senza l'argomento incompatibile
         uploaded_file = client.files.upload(file=temp_file.name)
         
         if ext == '.mp4':
-            time.sleep(2.5) # Diamogli tempo di elaborare il video
+            time.sleep(2.5) 
 
         prompt = POLICY_PROMPT + f"""
 Here is the single multimedia ad content to review:
@@ -198,28 +202,44 @@ Reply EXACTLY with "PASS" if everything (text, media, and destination URL) is co
             os.remove(temp_file.name)
 
 # ==========================================
-# GESTORE CENTRALE
+# GESTORE CENTRALE CON HASH MEMORY
 # ==========================================
 def run_sentinel():
     if not GEMINI_API_KEY:
-        print("❌ API Key GEMINI mancante! Obbligatoria per i controlli completi. Esco.")
+        print("❌ API Key GEMINI mancante! Esco.")
         return
 
     ads = get_ads_from_server()
     if not ads:
-        print("📭 Nessun annuncio trovato nella rete. Esco.")
+        print("📭 Nessun annuncio trovato nel database globale. Esco.")
         return
 
     history = load_history()
     current_time = time.time()
     
-    ads.sort(key=lambda x: history.get(x['id'], 0))
-    ads_to_check = ads[:40] 
+    # 🧠 FILTRO HASH INTELLIGENTE: Elimina chi è già stato controllato e NON ha subito modifiche
+    ads_to_check = []
+    for ad in ads:
+        ad_hash = get_ad_hash(ad)
+        # Se l'hash NON è nel registro (o l'hash è nuovo perché l'utente ha modificato la foto), lo analizziamo
+        if ad_hash not in history:
+            ad['hash_signature'] = ad_hash # Salviamo l'hash nel dizionario temporaneo
+            ads_to_check.append(ad)
+
+    if not ads_to_check:
+        print("✅ Tutti gli annunci sono puliti e già stati verificati. Nessuna modifica rilevata.")
+        sys.exit(0)
+
+    # Ordiniamo in modo casuale per non dare priorità sempre agli stessi ID
+    random.shuffle(ads_to_check)
+    
+    # Limita l'analisi
+    ads_to_check = ads_to_check[:40] 
     
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
     ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
     
-    print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
+    print(f"🔍 Sentinel attivato. Da analizzare (Nuovi/Modificati): {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
 
     if ads_text_only:
         available_ais = []
@@ -237,7 +257,9 @@ def run_sentinel():
                         res = results.get(ad['id'])
                         if res and res['status'] == "FLAG":
                             flag_ad(ad['id'], res['reason'])
-                        if res: history[ad['id']] = current_time
+                        
+                        # Salviamo l'impronta digitale dell'annuncio
+                        if res: history[ad['hash_signature']] = current_time
                     break 
             time.sleep(2)
 
@@ -249,14 +271,16 @@ def run_sentinel():
             if res is not None:
                 if res['status'] == "FLAG":
                     flag_ad(ad['id'], res['reason'])
-                history[ad['id']] = current_time
+                
+                # Salviamo l'impronta digitale
+                history[ad['hash_signature']] = current_time
             else:
                 print(f"⚠️ Analisi fallita per {ad['id']}. Riproverò alla prossima esecuzione.")
                 
             time.sleep(3)
             
     save_history(history)
-    print("🏁 Controllo completato. Registro aggiornato.")
+    print("🏁 Controllo completato. Registro aggiornato con i nuovi Hash.")
     sys.exit(0)
 
 if __name__ == "__main__":

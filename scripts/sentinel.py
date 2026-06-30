@@ -2,6 +2,7 @@ import os
 import json
 import time
 import requests
+import random
 import re
 import tempfile
 import sys
@@ -15,7 +16,7 @@ from google.genai import types
 WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY") # <-- LEGGE LA SECRET DI GITHUB
+SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY") 
 HISTORY_FILE = "checked_ads.json"
 BATCH_SIZE = 10
 
@@ -221,19 +222,17 @@ def run_sentinel():
     ads_to_check = []
     for ad in ads:
         ad_hash = get_ad_hash(ad)
-        # Se l'hash NON è nel registro (o l'hash è nuovo perché l'utente ha modificato la foto), lo analizziamo
         if ad_hash not in history:
-            ad['hash_signature'] = ad_hash # Salviamo l'hash nel dizionario temporaneo
+            ad['hash_signature'] = ad_hash 
             ads_to_check.append(ad)
 
     if not ads_to_check:
         print("✅ Tutti gli annunci sono puliti e già stati verificati. Nessuna modifica rilevata.")
         sys.exit(0)
 
-    # Ordiniamo in modo casuale per non dare priorità sempre agli stessi ID
+    # Ordinamento casuale garantito dalla presenza dell'import random
     random.shuffle(ads_to_check)
     
-    # Limita l'analisi
     ads_to_check = ads_to_check[:40] 
     
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
@@ -257,8 +256,6 @@ def run_sentinel():
                         res = results.get(ad['id'])
                         if res and res['status'] == "FLAG":
                             flag_ad(ad['id'], res['reason'])
-                        
-                        # Salviamo l'impronta digitale dell'annuncio
                         if res: history[ad['hash_signature']] = current_time
                     break 
             time.sleep(2)
@@ -271,8 +268,6 @@ def run_sentinel():
             if res is not None:
                 if res['status'] == "FLAG":
                     flag_ad(ad['id'], res['reason'])
-                
-                # Salviamo l'impronta digitale
                 history[ad['hash_signature']] = current_time
             else:
                 print(f"⚠️ Analisi fallita per {ad['id']}. Riproverò alla prossima esecuzione.")

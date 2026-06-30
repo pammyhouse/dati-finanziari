@@ -107,9 +107,8 @@ def analyze_text_batch(ads_batch, provider):
                 return None
         elif provider == 'gemini':
             client = genai.Client(api_key=GEMINI_API_KEY)
-            # Downgrade a 1.5-flash per ottenere 1500 richieste gratuite al giorno invece di 20
             response = client.models.generate_content(
-                model='gemini-1.5-flash', 
+                model='gemini-2.0-flash', 
                 contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.1)
             )
@@ -183,9 +182,8 @@ Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it viola
         
         for attempt in range(max_retries):
             try:
-                # Downgrade a 1.5-flash per evitare i blocchi di quota (1500 limit vs 20 limit)
                 response = client.models.generate_content(
-                    model='gemini-1.5-flash',
+                    model='gemini-2.0-flash',
                     contents=[uploaded_file, prompt],
                     config=types.GenerateContentConfig(temperature=0.1)
                 )

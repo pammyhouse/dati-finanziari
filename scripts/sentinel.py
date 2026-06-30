@@ -5,13 +5,14 @@ import requests
 import random
 import re
 import tempfile
+import sys
 from google import genai
 from google.genai import types
 
 # ==========================================
 # CONFIGURAZIONI E VARIABILI D'AMBIENTE
 # ==========================================
-WORKER_URL = "https://adswap.api-tradegpt.workers.dev" # Controlla che sia corretto
+WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 HISTORY_FILE = "checked_ads.json"
@@ -52,23 +53,31 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
+# SYSTEM PROMPT CONDIVISO CON FOCUS SULLA VERIFICA DEGLI URL
+POLICY_PROMPT = """You are a strict Trust & Safety AI Sentinel for an Ad Network.
+Analyze the given content and check for policy violations.
+
+CRITICAL SECURITY RULES:
+1. NSFW/PORN: Flag any adult content, pornography, dating networks, or explicit sexual terms.
+2. VIOLENCE/ILLEGAL: Flag weapons, drugs, regulated goods, or violence.
+3. SCAMS & MALWARE: Flag fake utilities, dropshipping scams, phishing or deceptive behaviors.
+4. DESTINATION URL AUDIT: Scrutinize the Destination URL string. Flag immediately if it contains suspicious subdomains, weird Top Level Domains (TLDs like .zip, .click, .xyz scams), known phishing keywords, or redirect loops matching malware structures.
+
+For each ad, you MUST reply with exactly this format:
+[ID] -> PASS
+or
+[ID] -> FLAG: [Brief Reason pointing out text, media or URL violation]
+"""
+
 # ==========================================
 # MOTORE 1: ANALISI SOLO TESTO (IN BATCH)
 # ==========================================
 def analyze_text_batch(ads_batch, provider):
-    prompt = """You are a strict Trust & Safety AI Sentinel. Analyze this batch of ads.
-Rules for FLAG: NSFW/Porn, Violence, Scams, Malware, Phishing or Illegal activities.
-For each ad, you MUST reply with exactly this format on a new line:
-[ID] -> PASS
-or
-[ID] -> FLAG: [Brief Reason]
-
-Here is the batch to check:
-"""
+    prompt = POLICY_PROMPT + "\nHere is the batch of text-only ads to check:\n"
     for ad in ads_batch:
         prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
-    print(f"🧠 [TESTO] Inviando batch a {provider.upper()}...")
+    print(f"🧠 [TESTO + URL] Inviando batch a {provider.upper()}...")
     response_text = ""
     
     try:
@@ -110,48 +119,54 @@ Here is the batch to check:
     return results
 
 # ==========================================
-# MOTORE 2: ANALISI MULTIMEDIALE (SINGOLA)
+# MOTORE 2: ANALISI MULTIMEDIALE + URL
 # ==========================================
 def analyze_multimedia_ad(ad):
-    """Scarica il media e lo invia a Gemini insieme ai testi dell'annuncio."""
-    print(f"🖼️ [MEDIA] Inizio analisi multimodale per ID: {ad['id']}")
+    print(f"🖼️ [MEDIA + URL] Inizio analisi multimodale per ID: {ad['id']}")
     
     media_url = ad.get('media_url')
     if not media_url: return None
 
-    # 1. Scarica il file in una cartella temporanea sicura
     try:
         res = requests.get(media_url, timeout=10)
         if res.status_code != 200:
             print(f"⚠️ Impossibile scaricare il media per {ad['id']}.")
-            return None # Ritorna None così non viene segnato come controllato
-    except:
+            return None
+            
+        # RISOLUZIONE DEL BUG: Estraiamo il Mime-Type corretto dagli header HTTP
+        mime_type = res.headers.get("Content-Type")
+        if not mime_type or "/" not in mime_type:
+            # Fallback euristico di emergenza se il server non risponde correttamente
+            if media_url.endswith('.mp4'): mime_type = 'video/mp4'
+            elif media_url.endswith('.png'): mime_type = 'image/png'
+            elif media_url.endswith('.gif'): mime_type = 'image/gif'
+            else: mime_type = 'image/jpeg'
+            
+        print(f"📋 Mime-Type rilevato correttamente: {mime_type}")
+    except Exception as e:
+        print(f"❌ Errore download asset: {e}")
         return None
 
-    # Salva il file localmente
     temp_file = tempfile.NamedTemporaryFile(delete=False)
     temp_file.write(res.content)
     temp_file.close()
 
     try:
-        # 2. Carica il file su Google Gemini
         client = genai.Client(api_key=GEMINI_API_KEY)
-        uploaded_file = client.files.upload(file=temp_file.name)
         
-        # Se è un video, diamo 2 secondi a Gemini per processarlo lato server
-        if "video" in res.headers.get("Content-Type", "") or media_url.endswith(".mp4"):
-            time.sleep(2)
+        # RISOLUZIONE DEL BUG: Passiamo esplicitamente il mime_type estratto a Google
+        uploaded_file = client.files.upload(file=temp_file.name, mime_type=mime_type)
+        
+        if "video" in mime_type or media_url.endswith(".mp4"):
+            time.sleep(2.5)
 
-        # 3. Chiedi a Gemini di analizzare TUTTO (File + Testo)
-        prompt = f"""You are a strict Trust & Safety AI Sentinel.
-Analyze the attached media file AND the following text associated with it.
-Rules for FLAG: NSFW/Porn, Violence, Scams, Malware, Phishing or Illegal activities.
-
+        prompt = POLICY_PROMPT + f"""
+Here is the single multimedia ad content to review:
 Ad Headline: {ad.get('headline','')}
 Ad Description: {ad.get('description','')}
 Destination URL: {ad.get('destination_url','')}
 
-Reply EXACTLY with a single word "PASS" if everything is safe, or "FLAG: [Brief Reason]" if the media or text violate policies."""
+Reply EXACTLY with "PASS" if everything (text, media, and destination URL) is compliant, or "FLAG: [Reason]" if anything violates the rules."""
 
         response = client.models.generate_content(
             model='gemini-2.5-flash',
@@ -159,7 +174,6 @@ Reply EXACTLY with a single word "PASS" if everything is safe, or "FLAG: [Brief 
             config=types.GenerateContentConfig(temperature=0.1)
         )
         
-        # 4. Pulizia: Cancella il file dai server di Google
         try:
             client.files.delete(name=uploaded_file.name)
         except:
@@ -167,18 +181,19 @@ Reply EXACTLY with a single word "PASS" if everything is safe, or "FLAG: [Brief 
 
         response_text = response.text.strip().upper()
         
-        if response_text.startswith("FLAG"):
-            reason = response_text.replace("FLAG:", "").strip()
+        if "FLAG" in response_text:
+            # Estrae il motivo
+            reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
+            reason = reason_match.group(1).strip() if reason_match else "Policy Violation"
             return {"status": "FLAG", "reason": reason}
         else:
             return {"status": "PASS", "reason": ""}
 
     except Exception as e:
-        print(f"❌ Errore durante l'analisi multimodale di {ad['id']}: {e}")
+        print(f"❌ Errore API Gemini Multimodale per {ad['id']}: {e}")
         return None
         
     finally:
-        # Pulizia: Cancella il file dal server GitHub
         if os.path.exists(temp_file.name):
             os.remove(temp_file.name)
 
@@ -187,7 +202,7 @@ Reply EXACTLY with a single word "PASS" if everything is safe, or "FLAG: [Brief 
 # ==========================================
 def run_sentinel():
     if not GEMINI_API_KEY:
-        print("❌ API Key GEMINI mancante! Obbligatoria per i controlli multimediali. Esco.")
+        print("❌ API Key GEMINI mancante! Obbligatoria per i controlli completi. Esco.")
         return
 
     ads = get_ads_from_server()
@@ -198,19 +213,16 @@ def run_sentinel():
     history = load_history()
     current_time = time.time()
     
-    # 🧠 ORDINAMENTO: I nuovi annunci (o quelli mai controllati) vengono prima.
+    # Ordiniamo gli annunci dando priorità assoluta a quelli non controllati
     ads.sort(key=lambda x: history.get(x['id'], 0))
-    
-    # Limita a 40 annunci totali per non sforare i tempi di esecuzione
     ads_to_check = ads[:40] 
     
-    # SEPARAZIONE DELLE CODE
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
     ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
     
     print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
 
-    # --- FASE 1: GESTIONE CODA SOLO TESTO (Batch) ---
+    # --- FASE 1: GESTIONE CODA SOLO TESTO + URL (Batch) ---
     if ads_text_only:
         available_ais = []
         if GROQ_API_KEY: available_ais.append('groq')
@@ -222,38 +234,35 @@ def run_sentinel():
             for ai_provider in available_ais:
                 results = analyze_text_batch(batch, ai_provider)
                 if results is not None:
-                    print(f"✅ Batch testo analizzato con {ai_provider.upper()}.")
+                    print(f"✅ Batch testo/URL analizzato con {ai_provider.upper()}.")
                     for ad in batch:
                         res = results.get(ad['id'])
                         if res and res['status'] == "FLAG":
                             flag_ad(ad['id'], res['reason'])
-                        # Salva in history solo se il controllo è andato a buon fine
                         if res: history[ad['id']] = current_time
-                    break # Esce dal loop dei provider
+                    break 
             time.sleep(2)
 
-    # --- FASE 2: GESTIONE CODA MULTIMEDIALE (Singoli) ---
+    # --- FASE 2: GESTIONE CODA MULTIMEDIALE + URL (Singoli) ---
     if ads_with_media:
-        print("🎬 Inizio analisi annunci multimediali (Testo + Media)...")
+        print("🎬 Inizio analisi annunci multimediali (Testo + Media + URL)...")
         for ad in ads_with_media:
             res = analyze_multimedia_ad(ad)
             
             if res is not None:
                 if res['status'] == "FLAG":
                     flag_ad(ad['id'], res['reason'])
-                # L'annuncio viene segnato come controllato SOLO ORA, dopo che
-                # Gemini ha letto contemporaneamente Testi + Video/Immagine.
                 history[ad['id']] = current_time
             else:
                 print(f"⚠️ Analisi fallita per {ad['id']}. Riproverò alla prossima esecuzione.")
                 
-            time.sleep(3) # Pausa tra un file multimediale e l'altro
+            time.sleep(3)
             
     save_history(history)
     print("🏁 Controllo completato. Registro aggiornato.")
+    sys.exit(0)
 
 if __name__ == "__main__":
-    import sys
     try:
         run_sentinel()
     except Exception as e:

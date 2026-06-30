@@ -64,24 +64,30 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
-POLICY_PROMPT = """You are a strict Trust & Safety AI Sentinel for an Ad Network.
-Analyze the given content and check for policy violations.
+# ==========================================
+# PROMPT TUNING: SEVERO MA TOLLERANTE SUL MARKETING
+# ==========================================
+POLICY_PROMPT = """You are a Trust & Safety AI Sentinel. 
+Your ONLY job is to catch SEVERE Tier-1 violations. DO NOT act as a strict marketing compliance officer.
 
-CRITICAL SECURITY RULES:
-1. NSFW/PORN: Flag any adult content, pornography, dating networks, or explicit sexual terms.
-2. VIOLENCE/ILLEGAL: Flag weapons, drugs, regulated goods, or violence.
-3. SCAMS & MALWARE: Flag fake utilities, dropshipping scams, phishing or deceptive behaviors.
-4. DESTINATION URL AUDIT: Scrutinize the Destination URL string. Flag immediately if it contains suspicious subdomains, weird Top Level Domains (TLDs like .zip, .click, .xyz scams), known phishing keywords, or redirect loops matching malware structures.
+CRITICAL SECURITY RULES (YOU MUST FLAG THESE):
+1. NSFW/PORN: Explicit adult content, pornography, nudity.
+2. ILLEGAL: Weapons, illegal drugs, severe violence, gore.
+3. SEVERE MALWARE/PHISHING: Destination URLs containing highly malicious domains or blatant credential harvesting scams.
+
+TOLERANCE RULES (YOU MUST PASS THESE - DO NOT FLAG):
+- IGNORE aggressive marketing, clickbait, or hype (e.g., "Download now!", "Guaranteed returns", "Best app ever").
+- IGNORE financial claims like "easy portfolio growth" or crypto trading promotions.
+- IGNORE minor brand discrepancies (e.g., Image says brand X, text says brand Y).
+- IGNORE poor grammar, typos, or low-quality visuals.
+- If in doubt about a marketing tactic, PASS. Only FLAG if it's a clear Tier-1 security threat (Porn, Illegal, actual Malware).
 
 For each ad, you MUST reply with exactly this format:
 [ID] -> PASS
 or
-[ID] -> FLAG: [Brief Reason pointing out text, media or URL violation]
+[ID] -> FLAG: [Brief Reason]
 """
 
-# ==========================================
-# MOTORE 1: ANALISI SOLO TESTO E URL
-# ==========================================
 def analyze_text_batch(ads_batch, provider):
     prompt = POLICY_PROMPT + "\nHere is the batch of text-only ads to check:\n"
     for ad in ads_batch:
@@ -101,8 +107,9 @@ def analyze_text_batch(ads_batch, provider):
                 return None
         elif provider == 'gemini':
             client = genai.Client(api_key=GEMINI_API_KEY)
+            # Downgrade a 1.5-flash per ottenere 1500 richieste gratuite al giorno invece di 20
             response = client.models.generate_content(
-                model='gemini-2.5-flash', 
+                model='gemini-1.5-flash', 
                 contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.1)
             )
@@ -127,9 +134,6 @@ def analyze_text_batch(ads_batch, provider):
             
     return results
 
-# ==========================================
-# MOTORE 2: ANALISI MULTIMEDIALE (CON RETRY INFALLIBILE)
-# ==========================================
 def analyze_multimedia_ad(ad):
     print(f"🖼️ [MEDIA + URL] Inizio analisi per ID: {ad['id']}")
     
@@ -172,23 +176,22 @@ Ad Headline: {ad.get('headline','')}
 Ad Description: {ad.get('description','')}
 Destination URL: {ad.get('destination_url','')}
 
-Reply EXACTLY with "PASS" if everything (text, media, and destination URL) is compliant, or "FLAG: [Reason]" if anything violates the rules."""
+Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it violates the Tier-1 rules."""
 
-        # SISTEMA DI RETRY PER GESTIRE 429 e 503
         max_retries = 4
-        delay = 15 # Attesa base di 15 secondi
+        delay = 15 
         
         for attempt in range(max_retries):
             try:
+                # Downgrade a 1.5-flash per evitare i blocchi di quota (1500 limit vs 20 limit)
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-1.5-flash',
                     contents=[uploaded_file, prompt],
                     config=types.GenerateContentConfig(temperature=0.1)
                 )
                 
-                # SE LA RISPOSTA È VUOTA (Blocco di Sicurezza Google)
                 if not response or not response.text:
-                    return {"status": "FLAG", "reason": "BLOCKED_BY_GOOGLE_SAFETY (Extreme Content: Pornography/Gore detected by API)"}
+                    return {"status": "FLAG", "reason": "BLOCKED_BY_GOOGLE_SAFETY (Extreme Content Detected)"}
                 
                 response_text = response.text.strip().upper()
                 
@@ -201,10 +204,9 @@ Reply EXACTLY with "PASS" if everything (text, media, and destination URL) is co
                     
             except Exception as e:
                 err_msg = str(e).upper()
-                # Se è un errore di Rate Limit o Server Occupato, riprova
                 if any(x in err_msg for x in ["503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"]):
                     if attempt < max_retries - 1:
-                        print(f"🕒 Limite Gemini raggiunto (429/503). Attendo {delay}s e riprovo...")
+                        print(f"🕒 Sovraccarico server o rate limit Google. Attendo {delay}s e riprovo...")
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -212,19 +214,15 @@ Reply EXACTLY with "PASS" if everything (text, media, and destination URL) is co
                 print(f"❌ Errore API Gemini Multimodale per {ad['id']}: {e}")
                 return None
                 
-        return None # Se fallisce tutti i tentativi
+        return None 
         
     finally:
-        # PULIZIA SICURA
         if uploaded_file:
             try: client.files.delete(name=uploaded_file.name)
             except: pass
         if os.path.exists(temp_file.name):
             os.remove(temp_file.name)
 
-# ==========================================
-# GESTORE CENTRALE CON HASH MEMORY
-# ==========================================
 def run_sentinel():
     if not GEMINI_API_KEY:
         print("❌ API Key GEMINI mancante! Esco.")
@@ -250,8 +248,6 @@ def run_sentinel():
         sys.exit(0)
 
     random.shuffle(ads_to_check)
-    
-    # Riduciamo il lotto a 30 per sicurezza per non sforare i token massimi 
     ads_to_check = ads_to_check[:30] 
     
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]

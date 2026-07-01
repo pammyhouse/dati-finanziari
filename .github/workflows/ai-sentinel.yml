@@ -1,73 +1,37 @@
-name: 24/7 Sentinel Audit
+name: Sentinel Audit
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  sentinel:
+  run:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ==========================
-      # CACHE MODELS (CRUCIAL)
-      # ==========================
-      - name: Cache HuggingFace
+      - name: Cache HF
         uses: actions/cache@v3
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/torch
-            ~/.cache/transformers
-          key: sentinel-hf-cache-v1
+          key: hf-cache-v3
 
-      # ==========================
-      # DEPENDENCIES
-      # ==========================
-      - name: Install deps
+      - name: Install
         run: |
           pip install --upgrade pip
-          pip install requests pillow opencv-python-headless torch torchvision transformers
+          pip install requests torch torchvision pillow transformers opencv-python-headless
 
-      # ==========================
-      # RUN
-      # ==========================
       - name: Run Sentinel
         env:
           SENTINEL_KEY: ${{ secrets.SENTINEL_KEY }}
-          HF_HOME: ~/.cache/huggingface
-          TRANSFORMERS_CACHE: ~/.cache/huggingface
-          HF_HUB_DISABLE_TELEMETRY: "1"
-        run: |
-          python -u scripts/sentinel.py
-
-      # ==========================
-      # SAVE HISTORY
-      # ==========================
-      - name: Commit history
-        run: |
-          git config --global user.name "AI Sentinel Bot"
-          git config --global user.email "sentinel@adswap.network"
-
-          git add checked_ads.json || true
-
-          if git diff --cached --quiet; then
-            echo "No changes"
-            exit 0
-          fi
-
-          git commit -m "update sentinel history"
-          git pull --rebase || true
-          git push
+          HF_HUB_DISABLE_TELEMETRY: 1
+          TRANSFORMERS_OFFLINE: 0
+        run: python -u scripts/sentinel.py

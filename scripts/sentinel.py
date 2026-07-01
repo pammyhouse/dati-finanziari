@@ -7,9 +7,10 @@ import tempfile
 import sys
 import hashlib
 import cv2
-from PIL import Image
 import torch
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+
+from PIL import Image
+from transformers import pipeline
 from detoxify import Detoxify
 
 # ==========================
@@ -24,13 +25,16 @@ torch.set_num_threads(1)
 print("⏳ Loading AI models...")
 
 try:
-    # --- TEXT MODELS ---
-    text_model = Detoxify("multilingual")
+    # TEXT TOXICITY MODEL
+    toxicity_model = Detoxify("multilingual")
 
-    safety_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-    safety_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+    # ZERO-SHOT SEMANTIC SAFETY MODEL (KEY IMPROVEMENT)
+    semantic_model = pipeline(
+        "zero-shot-classification",
+        model="roberta-large-mnli"
+    )
 
-    # --- IMAGE MODEL ---
+    # IMAGE NSFW MODEL
     image_model = pipeline(
         "image-classification",
         model="falconsai/nsfw_image_detection"
@@ -120,69 +124,64 @@ def url_risk(url):
     score = 0.0
     for s in signals:
         if s in url:
-            score += 0.25
+            score += 0.2
 
     return min(score, 1.0)
 
 
 # ==========================
-# LLM SAFETY CHECK (NO BLACKLIST)
+# SEMANTIC SAFETY (IMPORTANT)
 # ==========================
-def llm_safety_check(text):
-    prompt = f"""
-Determine if this content contains illegal or unsafe activity such as:
-- drugs
-- weapons
-- scams
-- fraud
-- sexual exploitation
+def semantic_risk(text):
+    labels = [
+        "safe content",
+        "drugs selling",
+        "weapons content",
+        "fraud or scam",
+        "sexual content",
+        "illegal activity"
+    ]
 
-Answer only: SAFE or UNSAFE
+    result = semantic_model(text, labels)
 
-Text:
-{text}
-"""
+    top_label = result["labels"][0]
+    top_score = result["scores"][0]
 
-    inputs = safety_tokenizer(prompt, return_tensors="pt", truncation=True)
+    # se non è safe e confidenza alta → rischio
+    if top_label != "safe content" and top_score > 0.55:
+        return top_score
 
-    outputs = safety_model.generate(
-        **inputs,
-        max_new_tokens=5
-    )
-
-    result = safety_tokenizer.decode(outputs[0], skip_special_tokens=True).upper()
-
-    return "UNSAFE" in result
+    return 0.0
 
 
 # ==========================
-# TEXT ANALYSIS (MULTI-LAYER)
+# TEXT ANALYSIS (SCORE FUSION)
 # ==========================
 def analyze_text(ad):
     text = f"{ad.get('headline','')} {ad.get('description','')}".strip().lower()
     url = ad.get("destination_url", "")
 
     try:
-        # --- Layer 1: Detoxify (emotion / toxicity)
-        res = text_model.predict(text)
+        t = toxicity_model.predict(text)
 
-        toxicity = res.get("toxicity", 0)
-        sexual = res.get("sexual_explicit", 0)
-        threat = res.get("threat", 0)
+        toxicity = t.get("toxicity", 0)
+        sexual = t.get("sexual_explicit", 0)
+        threat = t.get("threat", 0)
 
+        sem = semantic_risk(text)
+        url_r = url_risk(url)
+
+        # FINAL SCORE (single decision brain)
         risk_score = (
-            toxicity * 0.4 +
-            sexual * 0.3 +
-            threat * 0.6 +
-            url_risk(url) * 0.3
+            toxicity * 0.35 +
+            sexual * 0.25 +
+            threat * 0.25 +
+            sem * 0.55 +
+            url_r * 0.25
         )
 
-        if risk_score > 0.75:
-            return {"status": "FLAG", "reason": "TOXICITY_MODEL"}
-
-        # --- Layer 2: LLM semantic safety (drugs/weapons/fraud)
-        if llm_safety_check(text):
-            return {"status": "FLAG", "reason": "LLM_ILLEGAL_CONTENT"}
+        if risk_score > 0.72:
+            return {"status": "FLAG", "reason": f"RISK_SCORE_{risk_score:.2f}"}
 
     except Exception as e:
         print("⚠️ Text error:", e)
@@ -201,13 +200,14 @@ def analyze_image(file_path):
         result = image_model(img)
         scores = {r["label"].lower(): r["score"] for r in result}
 
-        sexual_score = max(
-            scores.get("nsfw", 0),
-            scores.get("porn", 0),
-            scores.get("sexy", 0)
-        )
+        nsfw = scores.get("nsfw", 0)
+        porn = scores.get("porn", 0)
+        sexy = scores.get("sexy", 0)
 
-        if sexual_score > 0.80:
+        sexual_score = max(nsfw, porn, sexy)
+
+        # soglia più alta per ridurre falsi positivi (es. cartoni tipo Winx)
+        if sexual_score > 0.85:
             return True
 
         return False
@@ -223,6 +223,7 @@ def analyze_image(file_path):
 def analyze_multimedia_ad(ad):
     media_url = ad.get("media_url")
 
+    # TEXT FIRST (always)
     text_res = analyze_text(ad)
     if text_res["status"] == "FLAG":
         return text_res

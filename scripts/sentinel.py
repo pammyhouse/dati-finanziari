@@ -9,7 +9,7 @@ import hashlib
 import cv2
 from PIL import Image
 import torch
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
 from detoxify import Detoxify
 
 # ==========================
@@ -24,14 +24,20 @@ torch.set_num_threads(1)
 print("⏳ Loading AI models...")
 
 try:
+    # --- TEXT MODELS ---
     text_model = Detoxify("multilingual")
 
+    safety_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
+    safety_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+
+    # --- IMAGE MODEL ---
     image_model = pipeline(
         "image-classification",
         model="falconsai/nsfw_image_detection"
     )
 
     print("✅ Models ready")
+
 except Exception as e:
     print("❌ Model error:", e)
     sys.exit(1)
@@ -101,7 +107,7 @@ def flag_ad(ad_id, reason):
 
 
 # ==========================
-# URL SAFETY (SOFT SIGNAL ONLY)
+# URL RISK (soft signal)
 # ==========================
 def url_risk(url):
     if not url:
@@ -109,14 +115,10 @@ def url_risk(url):
 
     url = url.lower()
 
-    # solo segnali probabilistici (NON blacklist rigida)
-    risk_signals = [
-        ".zip", ".click", ".loan", ".win",
-        "phishing", "casino", "bet"
-    ]
+    signals = [".zip", ".click", ".loan", ".win", "phishing", "casino", "bet"]
 
     score = 0.0
-    for s in risk_signals:
+    for s in signals:
         if s in url:
             score += 0.25
 
@@ -124,34 +126,66 @@ def url_risk(url):
 
 
 # ==========================
-# TEXT ANALYSIS (MODEL ONLY DECISION)
+# LLM SAFETY CHECK (NO BLACKLIST)
+# ==========================
+def llm_safety_check(text):
+    prompt = f"""
+Determine if this content contains illegal or unsafe activity such as:
+- drugs
+- weapons
+- scams
+- fraud
+- sexual exploitation
+
+Answer only: SAFE or UNSAFE
+
+Text:
+{text}
+"""
+
+    inputs = safety_tokenizer(prompt, return_tensors="pt", truncation=True)
+
+    outputs = safety_model.generate(
+        **inputs,
+        max_new_tokens=5
+    )
+
+    result = safety_tokenizer.decode(outputs[0], skip_special_tokens=True).upper()
+
+    return "UNSAFE" in result
+
+
+# ==========================
+# TEXT ANALYSIS (MULTI-LAYER)
 # ==========================
 def analyze_text(ad):
     text = f"{ad.get('headline','')} {ad.get('description','')}".strip().lower()
     url = ad.get("destination_url", "")
 
     try:
+        # --- Layer 1: Detoxify (emotion / toxicity)
         res = text_model.predict(text)
 
         toxicity = res.get("toxicity", 0)
         sexual = res.get("sexual_explicit", 0)
         threat = res.get("threat", 0)
 
-        url_r = url_risk(url)
-
-        # 🔥 decisione probabilistica (NON keyword-based)
         risk_score = (
-            toxicity * 0.5 +
-            sexual * 0.4 +
+            toxicity * 0.4 +
+            sexual * 0.3 +
             threat * 0.6 +
-            url_r * 0.3
+            url_risk(url) * 0.3
         )
 
         if risk_score > 0.75:
-            return {"status": "FLAG", "reason": "TEXT_RISK_SCORE_HIGH"}
+            return {"status": "FLAG", "reason": "TOXICITY_MODEL"}
+
+        # --- Layer 2: LLM semantic safety (drugs/weapons/fraud)
+        if llm_safety_check(text):
+            return {"status": "FLAG", "reason": "LLM_ILLEGAL_CONTENT"}
 
     except Exception as e:
-        print("⚠️ Text model error:", e)
+        print("⚠️ Text error:", e)
 
     return {"status": "PASS", "reason": ""}
 
@@ -167,13 +201,12 @@ def analyze_image(file_path):
         result = image_model(img)
         scores = {r["label"].lower(): r["score"] for r in result}
 
-        nsfw = scores.get("nsfw", 0)
-        porn = scores.get("porn", 0)
-        sexy = scores.get("sexy", 0)
+        sexual_score = max(
+            scores.get("nsfw", 0),
+            scores.get("porn", 0),
+            scores.get("sexy", 0)
+        )
 
-        sexual_score = max(nsfw, porn, sexy)
-
-        # 🔥 soglia più conservativa (meno falsi positivi tipo Winx)
         if sexual_score > 0.80:
             return True
 
@@ -218,11 +251,9 @@ def analyze_multimedia_ad(ad):
     flagged = False
 
     try:
-        # IMAGE
         if ext != ".mp4":
             flagged = analyze_image(tmp.name)
 
-        # VIDEO
         else:
             vid = cv2.VideoCapture(tmp.name)
 

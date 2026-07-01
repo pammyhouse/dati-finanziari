@@ -48,7 +48,7 @@ jobs:
         env:
           SENTINEL_KEY: ${{ secrets.SENTINEL_KEY }}
           HF_HOME: ~/.cache/huggingface
-          TRANSFORMERS_OFFLINE: "1"
+          TRANSFORMERS_CACHE: ~/.cache/huggingface
           HF_HUB_DISABLE_TELEMETRY: "1"
         run: |
           python -u scripts/sentinel.py

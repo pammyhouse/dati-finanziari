@@ -7,27 +7,40 @@ import re
 import tempfile
 import sys
 import hashlib
-import base64
-from google import genai
-from google.genai import types
+import cv2
+from PIL import Image
+import torch
+from transformers import pipeline
+from detoxify import Detoxify
 
 # ==========================================
 # CONFIGURAZIONI E VARIABILI D'AMBIENTE
 # ==========================================
 WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY") 
 HISTORY_FILE = "checked_ads.json"
-BATCH_SIZE = 10
 
+print("⏳ Inizializzazione modelli AI in RAM locale...")
+try:
+    # Modello testuale addestrato per il riconoscimento di tossicità multilingua
+    text_model = Detoxify('multilingual')
+    # Modello leggerissimo ed efficiente per la classificazione NSFW visiva
+    image_model = pipeline("image-classification", model="falconsai/nsfw_image_detection")
+    print("✅ Modelli locali pronti all'uso.")
+except Exception as e:
+    print(f"❌ Errore caricamento modelli: {e}")
+    sys.exit(1)
+
+# ==========================================
+# HELPER FUNCTIONS
+# ==========================================
 def load_history():
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r") as f:
                 return json.load(f)
         except:
-            return {}
+            pass
     return {}
 
 def save_history(history):
@@ -40,20 +53,17 @@ def get_ad_hash(ad):
 
 def get_ads_from_server():
     if not SENTINEL_SECRET_KEY:
-        print("❌ SENTINEL_KEY non configurata nei secrets. Accesso negato.")
+        print("❌ SENTINEL_KEY non configurata. Accesso negato.")
         return []
 
-    print("📡 Download TOTALE annunci dal server (Bypass crediti/sospensioni)...")
+    print("📡 Download TOTALE annunci dal server...")
     headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
     try:
         res = requests.get(f"{WORKER_URL}/api/admin/serve_all", headers=headers, timeout=20)
         if res.status_code == 200:
             return res.json().get('ads', [])
-        else:
-            print(f"❌ Errore Autorizzazione Worker: {res.status_code}")
-            return []
-    except Exception as e:
-        print(f"❌ Errore connessione Cloudflare: {e}")
+        return []
+    except:
         return []
 
 def flag_ad(ad_id, reason):
@@ -65,178 +75,130 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
-POLICY_PROMPT = """You are a Trust & Safety AI Sentinel. 
-Your ONLY job is to catch SEVERE Tier-1 violations. DO NOT act as a strict marketing compliance officer.
-
-CRITICAL SECURITY RULES (YOU MUST FLAG THESE):
-1. NSFW/PORN: Explicit adult content, pornography, nudity.
-2. ILLEGAL: Weapons, illegal drugs, severe violence, gore.
-3. SEVERE MALWARE/PHISHING: Destination URLs containing highly malicious domains or blatant credential harvesting scams.
-
-TOLERANCE RULES (YOU MUST PASS THESE - DO NOT FLAG):
-- IGNORE aggressive marketing, clickbait, or hype (e.g., "Download now!", "Guaranteed returns", "Best app ever").
-- IGNORE financial claims like "easy portfolio growth" or crypto trading promotions.
-- IGNORE minor brand discrepancies.
-- IGNORE poor grammar or typos.
-- If in doubt about a marketing tactic, PASS. Only FLAG if it's a clear Tier-1 security threat (Porn, Illegal, actual Malware).
-
-For each ad, you MUST reply with exactly this format:
-[ID] -> PASS
-or
-[ID] -> FLAG: [Brief Reason]
-"""
-
-# ==========================================
-# MOTORE 1: TESTO (GROQ LLAMA 3.1)
-# ==========================================
-def analyze_text_batch(ads_batch):
-    prompt = POLICY_PROMPT + "\nHere is the batch of text-only ads to check:\n"
-    for ad in ads_batch:
-        prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
-
-    print("🧠 [TESTO + URL] Inviando batch a GROQ...")
-    try:
-        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
-        res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
-        if res.status_code == 200:
-            response_text = res.json()['choices'][0]['message']['content']
-        else:
-            return None
-    except:
-        return None
-
-    results = {}
-    for ad in ads_batch:
-        ad_id = ad['id']
-        match = re.search(rf"{ad_id}\s*(?:->|:|-)?\s*(FLAG|PASS)(.*)", response_text, re.IGNORECASE)
-        if match:
-            status = match.group(1).upper()
-            reason = match.group(2).strip(" :->") if status == "FLAG" else ""
-            results[ad_id] = {"status": status, "reason": reason}
-        else:
-            results[ad_id] = {"status": "PASS", "reason": ""}
-    return results
-
-# ==========================================
-# MOTORE 2: MULTIMEDIALE IBRIDO
-# ==========================================
-def analyze_multimedia_ad(ad):
-    print(f"🖼️ [MEDIA + URL] Inizio analisi per ID: {ad['id']}")
+def is_malicious_url(url):
+    """Controlla domini e pattern notoriamente legati a truffe, phishing e malware."""
+    if not url: return False
+    url_lower = url.lower()
     
-    media_url = ad.get('media_url')
-    if not media_url: return None
+    bad_tlds = ['.xyz', '.zip', '.click', '.loan', '.top', '.win', '.stream']
+    if any(url_lower.endswith(tld) or (tld + "/") in url_lower for tld in bad_tlds):
+        return True
+        
+    bad_keywords = ['free-money', 'hack', 'crack', 'nude', 'porn', 'xxx', 'sex', 'casino', 'betting', 'phishing']
+    if any(keyword in url_lower for keyword in bad_keywords):
+        return True
+        
+    return False
 
+# ==========================================
+# MOTORE 1: TESTO E URL (DETOXIFY + REGEX)
+# ==========================================
+def analyze_text(ad):
+    url = ad.get('destination_url', '')
+    if is_malicious_url(url):
+        return {"status": "FLAG", "reason": "MALICIOUS_OR_BANNED_URL"}
+
+    text = f"{ad.get('headline', '')} {ad.get('description', '')}".strip()
+    if not text:
+        return {"status": "PASS", "reason": ""}
+
+    try:
+        results = text_model.predict(text)
+        # Soglie di tolleranza severe ma mirate ai Tier-1
+        if results['toxicity'] > 0.85 or results['sexual_explicit'] > 0.7 or results['threat'] > 0.75:
+            return {"status": "FLAG", "reason": "TOXIC_OR_EXPLICIT_TEXT"}
+    except Exception as e:
+        print(f"⚠️ Errore analisi testo: {e}")
+        
+    return {"status": "PASS", "reason": ""}
+
+# ==========================================
+# MOTORE 2: MULTIMEDIALE (NSFW ONNX PIPELINE)
+# ==========================================
+def analyze_image_file(file_path):
+    """Analizza una singola immagine e restituisce True se è NSFW."""
+    try:
+        img = Image.open(file_path)
+        img.thumbnail((512, 512)) # Riduce la risoluzione per alleggerire la CPU
+        result = image_model(img)
+        # result formato: [{'label': 'nsfw', 'score': 0.9}, {'label': 'normal', 'score': 0.1}]
+        for res in result:
+            if res['label'] == 'nsfw' and res['score'] > 0.75:
+                return True
+        return False
+    except Exception as e:
+        print(f"⚠️ Errore classificazione immagine: {e}")
+        return False
+
+def analyze_multimedia_ad(ad):
+    media_url = ad.get('media_url')
+    if not media_url: 
+        return analyze_text(ad)
+
+    print(f"🖼️ Analisi locale per ID: {ad['id']}")
+    
+    # 1. Controlla prima il testo e l'URL (Risparmia CPU se c'è già una violazione)
+    text_res = analyze_text(ad)
+    if text_res["status"] == "FLAG":
+        return text_res
+
+    # 2. Download Media
     try:
         res = requests.get(media_url, timeout=15)
-        if res.status_code != 200:
-            return None
-            
-        mime_type = res.headers.get("Content-Type") or "image/jpeg"
+        if res.status_code != 200: return None
+        mime_type = res.headers.get("Content-Type") or ""
         ext = '.jpg' 
-        if 'png' in mime_type.lower(): ext = '.png'
-        elif 'gif' in mime_type.lower(): ext = '.gif'
-        elif 'mp4' in mime_type.lower() or media_url.endswith('.mp4'): ext = '.mp4'
-        elif 'webp' in mime_type.lower(): ext = '.webp'
+        if 'mp4' in mime_type.lower() or media_url.endswith('.mp4'): ext = '.mp4'
     except:
         return None
 
-    is_video = 'video' in mime_type or ext == '.mp4'
-    single_ad_prompt = POLICY_PROMPT + f"\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
-
-    # --------------------------------------------------------
-    # STRADA A: IMMAGINI -> GROQ VISION (MODELLO LARGESCALE)
-    # --------------------------------------------------------
-    if not is_video and GROQ_API_KEY:
-        print(f"👁️ [GROQ VISION] Analisi immagine in corso...")
-        try:
-            base64_image = base64.b64encode(res.content).decode('utf-8')
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                # Proviamo il modello Vision stabile a 90 miliardi di parametri, pilastro della piattaforma
-                "model": "llama-3.2-90b-vision-preview", 
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": single_ad_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
-                    ]
-                }],
-                "temperature": 0.1
-            }
-            vision_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=30)
-            
-            if vision_res.status_code == 200:
-                response_text = vision_res.json()['choices'][0]['message']['content'].strip().upper()
-                if "FLAG" in response_text:
-                    reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
-                    return {"status": "FLAG", "reason": reason_match.group(1).strip() if reason_match else "Policy Violation"}
-                else:
-                    return {"status": "PASS", "reason": ""}
-            else:
-                print(f"⚠️ Errore API Groq Vision ({vision_res.status_code}): Fallback su Gemini...")
-        except Exception as e:
-            print(f"⚠️ Eccezione Groq Vision: {e}. Fallback su Gemini...")
-
-    # --------------------------------------------------------
-    # STRADA B: VIDEO O FALLBACK -> GEMINI (NUOVO SDK)
-    # --------------------------------------------------------
-    if not GEMINI_API_KEY: 
-        return None
-        
-    print(f"🎥 [GEMINI] Analisi multimodale video in corso...")
-    
     temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     temp_file.write(res.content)
     temp_file.close()
-    uploaded_file = None
+
+    is_video = ext == '.mp4'
+    flagged = False
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        uploaded_file = client.files.upload(file=temp_file.name)
-        
-        if is_video:
-            time.sleep(3)
-
-        models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
-        response_text = None
-        
-        for model_name in models_to_try:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[uploaded_file, single_ad_prompt],
-                    config=types.GenerateContentConfig(temperature=0.1)
-                )
-                
-                if not response or not response.text:
-                    return {"status": "FLAG", "reason": "BLOCKED_BY_GOOGLE_SAFETY (Extreme Content Detected)"}
-                
-                response_text = response.text.strip().upper()
-                break 
-                
-            except Exception as e:
-                err_msg = str(e).upper()
-                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                    continue 
-                elif "503" in err_msg or "UNAVAILABLE" in err_msg:
-                    continue
-                else:
-                    print(f"⚠️ Errore modello {model_name}: {e}")
-
-        if not response_text:
-            return None
-
-        if "FLAG" in response_text:
-            reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
-            return {"status": "FLAG", "reason": reason_match.group(1).strip() if reason_match else "Policy Violation"}
+        if not is_video:
+            # STRADA A: Analisi Immagine Diretta
+            flagged = analyze_image_file(temp_file.name)
         else:
-            return {"status": "PASS", "reason": ""}
+            # STRADA B: Estrazione Frame da Video
+            print(f"🎥 Estrazione frame video in corso...")
+            vidcap = cv2.VideoCapture(temp_file.name)
+            fps = int(vidcap.get(cv2.CAP_PROP_FPS))
+            if fps <= 0: fps = 24
+            
+            frame_count = 0
+            success, image = vidcap.read()
+            while success:
+                # Estrae 1 frame al secondo
+                if frame_count % fps == 0:
+                    frame_path = temp_file.name + f"_frame_{frame_count}.jpg"
+                    cv2.imwrite(frame_path, image)
+                    
+                    if analyze_image_file(frame_path):
+                        flagged = True
+                        os.remove(frame_path)
+                        break # Ferma subito l'analisi del video se trova un frame illecito
+                        
+                    os.remove(frame_path)
                 
+                success, image = vidcap.read()
+                frame_count += 1
+                
+                # Limite di sicurezza: analizza al massimo i primi 30 secondi (30 frame estratti)
+                if frame_count > fps * 30:
+                    break 
+            
+            vidcap.release()
+
+        if flagged:
+            return {"status": "FLAG", "reason": "NSFW_MEDIA_DETECTED"}
+        return {"status": "PASS", "reason": ""}
+
     finally:
-        if uploaded_file:
-            try: client.files.delete(name=uploaded_file.name)
-            except: pass
         if os.path.exists(temp_file.name):
             os.remove(temp_file.name)
 
@@ -260,42 +222,26 @@ def run_sentinel():
             ads_to_check.append(ad)
 
     if not ads_to_check:
-        print("✅ Tutti gli annunci in rete sono già stati verificati e non modificati.")
+        print("✅ Tutti gli annunci in rete sono già stati verificati.")
         sys.exit(0)
 
+    # Processa al massimo 50 annunci nuovi per run per non sforare i minuti di GitHub Actions
     random.shuffle(ads_to_check)
-    ads_to_check = ads_to_check[:30] 
+    ads_to_check = ads_to_check[:50] 
     
-    ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
-    ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
-    
-    print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
+    print(f"🔍 Sentinel attivato. Elaborazione di {len(ads_to_check)} nuove creatività in locale.")
 
-    if ads_text_only and GROQ_API_KEY:
-        batches = [ads_text_only[i:i + BATCH_SIZE] for i in range(0, len(ads_text_only), BATCH_SIZE)]
-        for batch in batches:
-            results = analyze_text_batch(batch)
-            if results is not None:
-                print(f"✅ Batch testo analizzato con GROQ.")
-                for ad in batch:
-                    res = results.get(ad['id'])
-                    if res and res['status'] == "FLAG":
-                        flag_ad(ad['id'], res['reason'])
-                    if res: history[ad['hash_signature']] = current_time
-            time.sleep(2)
-
-    if ads_with_media:
-        print("🎬 Inizio analisi annunci multimediali...")
-        for ad in ads_with_media:
+    for ad in ads_to_check:
+        if not ad.get('media_url'):
+            res = analyze_text(ad)
+        else:
             res = analyze_multimedia_ad(ad)
-            if res is not None:
-                if res['status'] == "FLAG":
-                    flag_ad(ad['id'], res['reason'])
-                history[ad['hash_signature']] = current_time
-            else:
-                print(f"⚠️ Analisi fallita per {ad['id']}. Riproverò alla prossima esecuzione.")
-            time.sleep(2)
             
+        if res is not None:
+            if res['status'] == "FLAG":
+                flag_ad(ad['id'], res['reason'])
+            history[ad['hash_signature']] = current_time
+
     save_history(history)
     print("🏁 Controllo completato. Registro aggiornato.")
     sys.exit(0)

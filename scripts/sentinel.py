@@ -101,48 +101,54 @@ def flag_ad(ad_id, reason):
 
 
 # ==========================
-# URL SAFETY
+# URL SAFETY (SOFT SIGNAL ONLY)
 # ==========================
-def is_malicious_url(url):
+def url_risk(url):
     if not url:
-        return False
+        return 0.0
 
     url = url.lower()
 
-    bad_patterns = [
-        ".xyz", ".zip", ".click", ".loan", ".top", ".win",
-        "free-money", "hack", "crack", "casino", "bet", "phishing"
+    # solo segnali probabilistici (NON blacklist rigida)
+    risk_signals = [
+        ".zip", ".click", ".loan", ".win",
+        "phishing", "casino", "bet"
     ]
 
-    return any(p in url for p in bad_patterns)
+    score = 0.0
+    for s in risk_signals:
+        if s in url:
+            score += 0.25
+
+    return min(score, 1.0)
 
 
 # ==========================
-# TEXT ANALYSIS
+# TEXT ANALYSIS (MODEL ONLY DECISION)
 # ==========================
 def analyze_text(ad):
-    url = ad.get("destination_url", "")
     text = f"{ad.get('headline','')} {ad.get('description','')}".strip().lower()
+    url = ad.get("destination_url", "")
 
-    # URL check
-    if is_malicious_url(url):
-        return {"status": "FLAG", "reason": "MALICIOUS_URL"}
-
-    # minimal keyword safety net
-    keywords = ["droga", "pistola", "cocaine", "guns", "sex", "xxx", "porn"]
-    if any(k in text for k in keywords):
-        return {"status": "FLAG", "reason": "ILLEGAL_KEYWORDS"}
-
-    # ML toxicity
     try:
         res = text_model.predict(text)
 
-        if (
-            res.get("toxicity", 0) > 0.85 or
-            res.get("sexual_explicit", 0) > 0.60 or
-            res.get("threat", 0) > 0.75
-        ):
-            return {"status": "FLAG", "reason": "TOXIC_TEXT"}
+        toxicity = res.get("toxicity", 0)
+        sexual = res.get("sexual_explicit", 0)
+        threat = res.get("threat", 0)
+
+        url_r = url_risk(url)
+
+        # 🔥 decisione probabilistica (NON keyword-based)
+        risk_score = (
+            toxicity * 0.5 +
+            sexual * 0.4 +
+            threat * 0.6 +
+            url_r * 0.3
+        )
+
+        if risk_score > 0.75:
+            return {"status": "FLAG", "reason": "TEXT_RISK_SCORE_HIGH"}
 
     except Exception as e:
         print("⚠️ Text model error:", e)
@@ -151,7 +157,7 @@ def analyze_text(ad):
 
 
 # ==========================
-# IMAGE ANALYSIS (FIXED LOGIC)
+# IMAGE ANALYSIS
 # ==========================
 def analyze_image(file_path):
     try:
@@ -165,11 +171,10 @@ def analyze_image(file_path):
         porn = scores.get("porn", 0)
         sexy = scores.get("sexy", 0)
 
-        # 🔥 combined sexual risk score (CORRECT LOGIC)
         sexual_score = max(nsfw, porn, sexy)
 
-        # decision threshold (balanced)
-        if sexual_score > 0.75:
+        # 🔥 soglia più conservativa (meno falsi positivi tipo Winx)
+        if sexual_score > 0.80:
             return True
 
         return False
@@ -185,7 +190,6 @@ def analyze_image(file_path):
 def analyze_multimedia_ad(ad):
     media_url = ad.get("media_url")
 
-    # always text-first
     text_res = analyze_text(ad)
     if text_res["status"] == "FLAG":
         return text_res
@@ -253,7 +257,7 @@ def analyze_multimedia_ad(ad):
             os.remove(tmp.name)
 
     if flagged:
-        return {"status": "FLAG", "reason": "NSFW_MEDIA"}
+        return {"status": "FLAG", "reason": "MEDIA_RISK"}
 
     return {"status": "PASS", "reason": ""}
 

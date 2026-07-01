@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ==========================
-      # 2. PYTHON
+      # 2. PYTHON SETUP
       # ==========================
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -29,23 +29,30 @@ jobs:
           python-version: '3.11'
 
       # ==========================
-      # 3. FULL MODEL CACHE (IMPORTANT)
+      # 3. SYSTEM DEPENDENCIES (IMPORTANT per OpenCV + PIL)
+      # ==========================
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libgl1
+
+      # ==========================
+      # 4. CACHE MODELS (CRUCIAL)
       # ==========================
       - name: Cache HuggingFace + Torch + Transformers
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/huggingface
-            ~/.cache/torch
-            ~/.cache/torch_extensions
             ~/.cache/huggingface/hub
             ~/.cache/huggingface/transformers
-          key: ${{ runner.os }}-sentinel-v3
+            ~/.cache/torch
+          key: ${{ runner.os }}-sentinel-v3-models
           restore-keys: |
-            ${{ runner.os }}-sentinel-
+            ${{ runner.os }}-sentinel-v3-
 
       # ==========================
-      # 4. INSTALL DEPENDENCIES
+      # 5. PYTHON DEPENDENCIES
       # ==========================
       - name: Install dependencies
         run: |
@@ -53,28 +60,24 @@ jobs:
 
           pip install --no-cache-dir \
             requests \
-            detoxify \
-            transformers \
             torch \
             torchvision \
+            transformers \
             pillow \
-            opencv-python-headless \
-            sentencepiece \
-            accelerate
+            opencv-python-headless
 
       # ==========================
-      # 5. RUN SENTINEL
+      # 6. RUN SENTINEL
       # ==========================
       - name: Run Sentinel
         env:
           SENTINEL_KEY: ${{ secrets.SENTINEL_KEY }}
           HF_HUB_DISABLE_TELEMETRY: 1
-          TRANSFORMERS_CACHE: ~/.cache/huggingface
         run: |
           python -u scripts/sentinel.py
 
       # ==========================
-      # 6. SAVE HISTORY SAFELY
+      # 7. COMMIT HISTORY SAFE
       # ==========================
       - name: Commit history
         run: |
@@ -83,10 +86,7 @@ jobs:
 
           git add checked_ads.json || true
 
-          if git diff --cached --quiet; then
-            echo "No changes"
-            exit 0
-          fi
+          git diff --cached --quiet && echo "No changes" && exit 0
 
           git pull --rebase || true
           git commit -m "Auto-update Sentinel registry"

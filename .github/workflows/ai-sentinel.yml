@@ -2,7 +2,7 @@ name: 24/7 AI Sentinel Audit
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '0 */4 * * *' # Gira ogni 4 ore
   workflow_dispatch:
 
 permissions:
@@ -21,10 +21,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Installazione Dipendenze
+      - name: Installazione Dipendenze (Libreria Stabile Gemini)
         run: |
           python -m pip install --upgrade pip
-          pip install requests google-genai
+          pip install requests google-generativeai
 
       - name: Esecuzione AI Sentinel
         env:

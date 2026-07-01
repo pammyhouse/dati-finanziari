@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # ==========================
       # 1. CHECKOUT
       # ==========================
@@ -28,20 +29,22 @@ jobs:
           python-version: '3.11'
 
       # ==========================
-      # 3. CACHE MODELLI (CRUCIALE)
+      # 3. CACHE MODELS (IMPORTANT)
       # ==========================
-      - name: Cache HuggingFace models
+      - name: Cache HuggingFace + Torch
         uses: actions/cache@v3
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/torch
-          key: ${{ runner.os }}-ai-models-v1
+            ~/.cache/huggingface/hub
+            ~/.cache/huggingface/transformers
+          key: ${{ runner.os }}-sentinel-models-v2
           restore-keys: |
-            ${{ runner.os }}-ai-models-
+            ${{ runner.os }}-sentinel-models-
 
       # ==========================
-      # 4. DEPENDENCIES
+      # 4. INSTALL DEPENDENCIES
       # ==========================
       - name: Install dependencies
         run: |
@@ -62,20 +65,24 @@ jobs:
       - name: Run Sentinel
         env:
           SENTINEL_KEY: ${{ secrets.SENTINEL_KEY }}
+          HF_HUB_DISABLE_TELEMETRY: 1
         run: |
           python -u scripts/sentinel.py
 
       # ==========================
-      # 6. COMMIT HISTORY SAFE
+      # 6. SAVE HISTORY (ROBUST)
       # ==========================
-      - name: Save history
+      - name: Commit history
         run: |
           git config --global user.name "AI Sentinel Bot"
           git config --global user.email "sentinel@adswap.network"
 
           git add checked_ads.json || true
 
-          git diff --cached --quiet && echo "No changes" && exit 0
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
 
           git commit -m "Auto-update Sentinel registry"
           git pull --rebase || true

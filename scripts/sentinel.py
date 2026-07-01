@@ -91,7 +91,7 @@ def is_malicious_url(url):
     return False
 
 # ==========================================
-# MOTORE 1: TESTO E URL (DETOXIFY + REGEX)
+# MOTORE 1: TESTO E URL (DETOXIFY + BLACKLIST)
 # ==========================================
 def analyze_text(ad):
     url = ad.get('destination_url', '')
@@ -102,9 +102,23 @@ def analyze_text(ad):
     if not text:
         return {"status": "PASS", "reason": ""}
 
+    text_lower = text.lower()
+    
+    # KILL-LIST MULTILINGUA (Droga, Armi, Truffe)
+    illegal_keywords = [
+        # ITA
+        'droga', 'armi', 'pistola', 'fucile', 'cocaina', 'marijuana', 'senza ricetta',
+        # ENG
+        'drugs', 'weapons', 'guns', 'rifle', 'cocaine', 'weed', 'meth', 'no prescription',
+        # ESP
+        'drogas', 'armas', 'pistola', 'cocaína'
+    ]
+    
+    if any(keyword in text_lower for keyword in illegal_keywords):
+        return {"status": "FLAG", "reason": "ILLEGAL_GOODS_DETECTED"}
+
     try:
         results = text_model.predict(text)
-        # Soglie di tolleranza severe ma mirate ai Tier-1
         if results['toxicity'] > 0.85 or results['sexual_explicit'] > 0.7 or results['threat'] > 0.75:
             return {"status": "FLAG", "reason": "TOXIC_OR_EXPLICIT_TEXT"}
     except Exception as e:

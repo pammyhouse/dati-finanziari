@@ -1,37 +1,82 @@
-name: Sentinel Audit
+name: 24/7 Local Sentinel Audit
 
 on:
   schedule:
     - cron: '0 */4 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  run:
+  audit_network:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # ==========================
+      # 1. CHECKOUT
+      # ==========================
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      # ==========================
+      # 2. PYTHON
+      # ==========================
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Cache HF
+      # ==========================
+      # 3. CACHE MODELLI (CRUCIALE)
+      # ==========================
+      - name: Cache HuggingFace models
         uses: actions/cache@v3
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/torch
-          key: hf-cache-v3
+          key: ${{ runner.os }}-ai-models-v1
+          restore-keys: |
+            ${{ runner.os }}-ai-models-
 
-      - name: Install
+      # ==========================
+      # 4. DEPENDENCIES
+      # ==========================
+      - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install requests torch torchvision pillow transformers opencv-python-headless
+          python -m pip install --upgrade pip
 
+          pip install --no-cache-dir \
+            requests \
+            detoxify \
+            transformers \
+            torch \
+            torchvision \
+            pillow \
+            opencv-python-headless
+
+      # ==========================
+      # 5. RUN SENTINEL
+      # ==========================
       - name: Run Sentinel
         env:
           SENTINEL_KEY: ${{ secrets.SENTINEL_KEY }}
-          HF_HUB_DISABLE_TELEMETRY: 1
-          TRANSFORMERS_OFFLINE: 0
-        run: python -u scripts/sentinel.py
+        run: |
+          python -u scripts/sentinel.py
+
+      # ==========================
+      # 6. COMMIT HISTORY SAFE
+      # ==========================
+      - name: Save history
+        run: |
+          git config --global user.name "AI Sentinel Bot"
+          git config --global user.email "sentinel@adswap.network"
+
+          git add checked_ads.json || true
+
+          git diff --cached --quiet && echo "No changes" && exit 0
+
+          git commit -m "Auto-update Sentinel registry"
+          git pull --rebase || true
+          git push

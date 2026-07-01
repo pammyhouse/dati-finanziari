@@ -3,7 +3,6 @@ import json
 import time
 import requests
 import random
-import re
 import tempfile
 import sys
 import hashlib
@@ -20,22 +19,21 @@ WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
 SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY")
 HISTORY_FILE = "checked_ads.json"
 
-# 🔥 stabilità CPU GitHub Actions
 torch.set_num_threads(1)
 
-print("⏳ Inizializzazione modelli AI locali...")
+print("⏳ Loading AI models...")
 
 try:
-    text_model = Detoxify('multilingual')
+    text_model = Detoxify("multilingual")
 
     image_model = pipeline(
         "image-classification",
         model="falconsai/nsfw_image_detection"
     )
 
-    print("✅ Modelli pronti.")
+    print("✅ Models ready")
 except Exception as e:
-    print(f"❌ Errore modelli: {e}")
+    print("❌ Model error:", e)
     sys.exit(1)
 
 
@@ -65,7 +63,7 @@ def get_ad_hash(ad):
 # ==========================
 def get_ads_from_server():
     if not SENTINEL_SECRET_KEY:
-        print("❌ SENTINEL_KEY mancante")
+        print("❌ Missing SENTINEL_KEY")
         return []
 
     headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
@@ -84,7 +82,7 @@ def get_ads_from_server():
         return []
 
     except Exception as e:
-        print("❌ Connessione fallita:", e)
+        print("❌ Connection error:", e)
         return []
 
 
@@ -124,18 +122,18 @@ def is_malicious_url(url):
 # ==========================
 def analyze_text(ad):
     url = ad.get("destination_url", "")
-    text = f"{ad.get('headline','')} {ad.get('description','')}".strip()
+    text = f"{ad.get('headline','')} {ad.get('description','')}".strip().lower()
 
-    # 1. URL check
+    # URL check
     if is_malicious_url(url):
         return {"status": "FLAG", "reason": "MALICIOUS_URL"}
 
-    # 2. keyword minimal risk filter
+    # minimal keyword safety net
     keywords = ["droga", "pistola", "cocaine", "guns", "sex", "xxx", "porn"]
-    if any(k in text.lower() for k in keywords):
+    if any(k in text for k in keywords):
         return {"status": "FLAG", "reason": "ILLEGAL_KEYWORDS"}
 
-    # 3. ML toxicity model
+    # ML toxicity
     try:
         res = text_model.predict(text)
 
@@ -147,13 +145,13 @@ def analyze_text(ad):
             return {"status": "FLAG", "reason": "TOXIC_TEXT"}
 
     except Exception as e:
-        print("⚠️ Detoxify error:", e)
+        print("⚠️ Text model error:", e)
 
     return {"status": "PASS", "reason": ""}
 
 
 # ==========================
-# IMAGE ANALYSIS
+# IMAGE ANALYSIS (FIXED LOGIC)
 # ==========================
 def analyze_image(file_path):
     try:
@@ -161,17 +159,17 @@ def analyze_image(file_path):
         img.thumbnail((512, 512))
 
         result = image_model(img)
+        scores = {r["label"].lower(): r["score"] for r in result}
 
-        scores = {r["label"]: r["score"] for r in result}
+        nsfw = scores.get("nsfw", 0)
+        porn = scores.get("porn", 0)
+        sexy = scores.get("sexy", 0)
 
-        # 🔥 soglia più aggressiva per ads
-        nsfw_score = scores.get("nsfw", 0)
+        # 🔥 combined sexual risk score (CORRECT LOGIC)
+        sexual_score = max(nsfw, porn, sexy)
 
-        if nsfw_score > 0.60:
-            return True
-
-        # fallback extra categorie (se presenti)
-        if scores.get("porn", 0) > 0.40:
+        # decision threshold (balanced)
+        if sexual_score > 0.75:
             return True
 
         return False
@@ -182,12 +180,12 @@ def analyze_image(file_path):
 
 
 # ==========================
-# MULTIMEDIA ANALYSIS
+# MULTIMEDIA
 # ==========================
 def analyze_multimedia_ad(ad):
     media_url = ad.get("media_url")
 
-    # sempre text-first
+    # always text-first
     text_res = analyze_text(ad)
     if text_res["status"] == "FLAG":
         return text_res
@@ -226,13 +224,13 @@ def analyze_multimedia_ad(ad):
 
             fps = int(vid.get(cv2.CAP_PROP_FPS)) or 24
             frame_i = 0
-            max_seconds = 10  # 🔥 più leggero per GitHub Actions
+            max_seconds = 10
 
             success, frame = vid.read()
 
             while success:
                 if frame_i % fps == 0:
-                    frame_path = tmp.name + f"_f.jpg"
+                    frame_path = tmp.name + "_frame.jpg"
                     cv2.imwrite(frame_path, frame)
 
                     if analyze_image(frame_path):
@@ -267,7 +265,7 @@ def run_sentinel():
     ads = get_ads_from_server()
 
     if not ads:
-        print("📭 Nessun annuncio")
+        print("📭 No ads")
         sys.exit(0)
 
     history = load_history()
@@ -282,13 +280,13 @@ def run_sentinel():
             queue.append(ad)
 
     if not queue:
-        print("✅ Nessun nuovo contenuto")
+        print("✅ No new content")
         sys.exit(0)
 
     random.shuffle(queue)
     queue = queue[:50]
 
-    print(f"🔍 Analisi {len(queue)} ads")
+    print(f"🔍 Processing {len(queue)} ads")
 
     for ad in queue:
         try:
@@ -303,11 +301,10 @@ def run_sentinel():
             history[ad["hash"]] = now
 
         except Exception as e:
-            print("⚠️ error ad:", e)
+            print("⚠️ error:", e)
 
     save_history(history)
     print("🏁 DONE")
-    sys.exit(0)
 
 
 if __name__ == "__main__":

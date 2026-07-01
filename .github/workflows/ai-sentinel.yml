@@ -29,19 +29,20 @@ jobs:
           python-version: '3.11'
 
       # ==========================
-      # 3. CACHE MODELS (IMPORTANT)
+      # 3. FULL MODEL CACHE (IMPORTANT)
       # ==========================
-      - name: Cache HuggingFace + Torch
+      - name: Cache HuggingFace + Torch + Transformers
         uses: actions/cache@v3
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/torch
+            ~/.cache/torch_extensions
             ~/.cache/huggingface/hub
             ~/.cache/huggingface/transformers
-          key: ${{ runner.os }}-sentinel-models-v2
+          key: ${{ runner.os }}-sentinel-v3
           restore-keys: |
-            ${{ runner.os }}-sentinel-models-
+            ${{ runner.os }}-sentinel-
 
       # ==========================
       # 4. INSTALL DEPENDENCIES
@@ -57,7 +58,9 @@ jobs:
             torch \
             torchvision \
             pillow \
-            opencv-python-headless
+            opencv-python-headless \
+            sentencepiece \
+            accelerate
 
       # ==========================
       # 5. RUN SENTINEL
@@ -66,11 +69,12 @@ jobs:
         env:
           SENTINEL_KEY: ${{ secrets.SENTINEL_KEY }}
           HF_HUB_DISABLE_TELEMETRY: 1
+          TRANSFORMERS_CACHE: ~/.cache/huggingface
         run: |
           python -u scripts/sentinel.py
 
       # ==========================
-      # 6. SAVE HISTORY (ROBUST)
+      # 6. SAVE HISTORY SAFELY
       # ==========================
       - name: Commit history
         run: |
@@ -80,10 +84,10 @@ jobs:
           git add checked_ads.json || true
 
           if git diff --cached --quiet; then
-            echo "No changes to commit"
+            echo "No changes"
             exit 0
           fi
 
-          git commit -m "Auto-update Sentinel registry"
           git pull --rebase || true
+          git commit -m "Auto-update Sentinel registry"
           git push

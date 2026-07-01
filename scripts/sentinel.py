@@ -19,31 +19,28 @@ WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
 SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY")
 HISTORY_FILE = "checked_ads.json"
 
+# Ottimizzazione CPU per GitHub Actions
 torch.set_num_threads(1)
 
-print("⏳ Caricamento dei modelli IA (Zero-Shot & Multimodal)...")
+print("⏳ Caricamento dei modelli IA (Inferenza Ottimizzata Locale)...")
 
 # ==========================
 # MODELLI (COMPATIBILI GITHUB ACTIONS)
 # ==========================
-
-# 1. Modello Testuale Zero-Shot (Multilingua) per riconoscere contesti illegali
 text_model = pipeline(
     "zero-shot-classification",
     model="MoritzLaurer/mDeBERTa-v3-base-mnli-xnli" 
 )
 
-# 2. Modello base per il Porno esplicito
 image_model = pipeline(
     "image-classification",
     model="Falconsai/nsfw_image_detection"
 )
 
-# 3. CLIP per contesti visivi complessi (Armi, Droghe, Truffe)
 clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
-print("✅ Modelli pronti all'uso.")
+print("✅ Modelli pronti in RAM locale.")
 
 # ==========================
 # STORICO E HASH
@@ -63,16 +60,15 @@ def save_history(history):
 
 def get_ad_hash(ad):
     content = f"{ad.get('headline','')}{ad.get('description','')}{ad.get('media_url','')}{ad.get('destination_url','')}"
-    return hashlib.md5(content.encode()).hexdigest()
+    return hashlib.md5(content.encode('utf-8')).hexdigest()
 
 # ==========================
-# SERVER
+# SERVER COMMUNICATOR
 # ==========================
 def get_ads_from_server():
     if not SENTINEL_SECRET_KEY:
-        print("❌ SENTINEL_KEY mancante")
+        print("❌ SENTINEL_KEY mancante nei secrets.")
         return []
-
     try:
         res = requests.get(
             f"{WORKER_URL}/api/admin/serve_all",
@@ -83,43 +79,46 @@ def get_ads_from_server():
             return res.json().get("ads", [])
         return []
     except Exception as e:
-        print("❌ Errore del server:", e)
+        print("❌ Errore del server Cloudflare:", e)
         return []
 
 def flag_ad(ad_id, reason):
     print(f"🚨 FLAG IMMEDIATO (Burst x3) {ad_id} -> {reason}")
-    # Il burst a 3 assicura la sospensione automatica immediata dell'utente sul Worker
+    # Il burst invia 3 segnalazioni di fila per forzare il Worker a sospendere l'utente all'istante
     for i in range(3):
         try:
             requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
-            print(f"   -> Segnalazione {i+1}/3 inviata con successo.")
-        except Exception as e:
-            print(f"   -> Fallimento connessione alla chiamata {i+1}: {e}")
-        time.sleep(0.5)
+            print(f"   -> Segnalazione {i+1}/3 registrata sul database distribuito.")
+        except:
+            pass
+        time.sleep(0.3)
 
 # ==========================
-# ANALISI TESTUALE (ZERO-SHOT)
+# ANALISI TESTUALE (VINCITORE ASSOLUTO)
 # ==========================
 def text_risk(text):
     if not text.strip(): return 0.0
     try:
         candidate_labels = ["illegal drugs and narcotics", "weapons and firearms", "pornography", "financial scam", "safe marketing advertisement"]
-        res = text_model(text[:512], candidate_labels, multi_label=False)
         
-        if res['labels'][0] == "safe marketing advertisement":
-            return 0.1
+        # Disabilitiamo il calcolo dei gradienti per azzerare i warning e velocizzare la CPU
+        with torch.no_grad():
+            res = text_model(text[:512], candidate_labels, multi_label=False)
+        
+        top_label = res['labels'][0]
+        top_score = res['scores'][0]
+        
+        # Se la categoria più probabile è quella pulita, il rischio è nullo
+        if top_label == "safe marketing advertisement":
+            return 0.0
             
-        risk_score = 0.0
-        for label, score in zip(res['labels'], res['scores']):
-            if label != "safe marketing advertisement":
-                risk_score += score
-                
-        return min(risk_score, 1.0)
+        # Ritorna lo score solo se l'IA è davvero sicura dell'infrazione illecita
+        return top_score if top_score > 0.55 else 0.0
     except:
         return 0.0
 
 # ==========================
-# ANALISI IMMAGINI (CLIP ZERO-SHOT)
+# ANALISI MULTIMODALE (CLIP MAX CONFIDENCE)
 # ==========================
 def clip_risk(image_path):
     try:
@@ -133,51 +132,57 @@ def clip_risk(image_path):
         ]
 
         inputs = clip_processor(text=prompts, images=image, return_tensors="pt", padding=True)
-        outputs = clip_model(**inputs)
-        probs = outputs.logits_per_image.softmax(dim=1)[0]
+        
+        with torch.no_grad():
+            outputs = clip_model(**inputs)
+            probs = outputs.logits_per_image.softmax(dim=1)[0]
 
-        unsafe_score = float(probs[0] + probs[1] + probs[2] + probs[3])
-        safe_score = float(probs[4])
-
-        return unsafe_score - safe_score
+        top_index = int(probs.argmax().item())
+        
+        # Se vince la categoria Safe (indice 4), l'immagine è approvata
+        if top_index == 4:
+            return 0.0
+            
+        # Altrimenti restituisce il valore del pericolo dominante rilevato
+        return float(probs[top_index].item())
     except:
         return 0.0
 
 # ==========================
-# ANALISI IMMAGINI (NSFW DI BASE)
+# ANALISI IMMAGINI (NSFW FILTER)
 # ==========================
 def image_risk(image_path):
     try:
         img = Image.open(image_path).convert("RGB")
         img.thumbnail((512, 512))
 
-        result = image_model(img)
+        with torch.no_grad():
+            result = image_model(img)
+            
         scores = {r["label"].lower(): r["score"] for r in result}
-
-        return max(scores.get("nsfw", 0), scores.get("porn", 0), scores.get("sexy", 0))
+        nsfw_score = max(scores.get("nsfw", 0), scores.get("porn", 0))
+        
+        return nsfw_score if nsfw_score > 0.60 else 0.0
     except:
         return 0.0
 
 # ==========================
-# ANALISI URL (Eurisitica)
+# ANALISI URL (EURISTICA)
 # ==========================
 def url_risk(url):
     if not url: return 0.0
     signals = [".zip", ".click", ".loan", ".win", "casino", "bet", "phishing"]
-    score = sum(0.2 for s in signals if s in url.lower())
+    score = sum(0.25 for s in signals if s in url.lower())
     return min(score, 1.0)
 
 # ==========================
-# ANALISI MULTIMODALE PONDERATA
+# INTERSEZIONE DELLE CODE
 # ==========================
 def analyze_ad(ad):
     text = f"{ad.get('headline','')} {ad.get('description','')}"
     url = ad.get("destination_url", "")
 
-    # -------- TESTO --------
     t_score = text_risk(text)
-
-    # -------- MEDIA --------
     m_score = 0.0
     media_url = ad.get("media_url")
     tmp_file = None
@@ -205,7 +210,7 @@ def analyze_ad(ad):
                         cv2.imwrite(fpath, frame)
 
                         img_score = image_risk(fpath)
-                        clip_score = max(0, clip_risk(fpath)) 
+                        clip_score = clip_risk(fpath)
                         
                         m_score = max(m_score, img_score, clip_score)
                         os.remove(fpath)
@@ -216,7 +221,7 @@ def analyze_ad(ad):
 
             else:
                 img_score = image_risk(tmp_file.name)
-                clip_score = max(0, clip_risk(tmp_file.name))
+                clip_score = clip_risk(tmp_file.name)
                 m_score = max(img_score, clip_score)
 
         except:
@@ -225,24 +230,24 @@ def analyze_ad(ad):
             if tmp_file and os.path.exists(tmp_file.name):
                 os.remove(tmp_file.name)
 
-    # -------- URL --------
     u_score = url_risk(url)
 
-    # -------- CALCOLO FINALE --------
-    final_score = max(t_score, m_score) * 0.8 + (u_score * 0.2)
+    # Calcolo meritocratico del rischio: se un vettore è palesemente illecito, l'ad cade
+    final_score = max(t_score, m_score) * 0.85 + (u_score * 0.15)
 
-    if final_score > 0.65:
-        return {"status": "FLAG", "reason": f"AI_RISK_SCORE:_{final_score:.2f}"}
+    # Innalzata la barriera di controllo per evitare falsi positivi da marketing aggressivo
+    if final_score > 0.70:
+        return {"status": "FLAG", "reason": f"AI_RISK_{final_score:.2f}"}
 
     return {"status": "PASS", "reason": ""}
 
 # ==========================
-# LOOP PRINCIPALE
+# CORE PIPELINE
 # ==========================
 def run():
     ads = get_ads_from_server()
     if not ads:
-        print("📭 Nessun annuncio da verificare.")
+        print("📭 Nessun annuncio da verificare nel cluster.")
         return
 
     history = load_history()
@@ -255,10 +260,10 @@ def run():
             ad["hash"] = h
             queue.append(ad)
 
-    queue = queue[:50]
+    queue = queue[:40]
     random.shuffle(queue)
 
-    print(f"🔍 Elaborazione di {len(queue)} creatività in locale...")
+    print(f"🔍 Sentinel attivato. Analisi in corso su {len(queue)} nuove inserzioni...")
 
     for ad in queue:
         try:
@@ -267,10 +272,10 @@ def run():
                 flag_ad(ad["id"], res["reason"])
             history[ad["hash"]] = now
         except Exception as e:
-            print(f"⚠️ Errore imprevisto sull'ID {ad.get('id')}:", e)
+            print(f"⚠️ Salto ad {ad.get('id')} per anomalia di runtime:", e)
 
     save_history(history)
-    print("🏁 Elaborazione completata.")
+    print("🏁 DONE. Registro delle impronte digitali aggiornato.")
 
 if __name__ == "__main__":
     run()

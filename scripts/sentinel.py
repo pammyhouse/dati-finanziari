@@ -13,34 +13,42 @@ import torch
 from transformers import pipeline
 from detoxify import Detoxify
 
-# ==========================================
-# CONFIGURAZIONI E VARIABILI D'AMBIENTE
-# ==========================================
+# ==========================
+# CONFIG
+# ==========================
 WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
-SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY") 
+SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY")
 HISTORY_FILE = "checked_ads.json"
 
-print("⏳ Inizializzazione modelli AI in RAM locale...")
+# 🔥 stabilità CPU GitHub Actions
+torch.set_num_threads(1)
+
+print("⏳ Inizializzazione modelli AI locali...")
+
 try:
-    # Modello testuale addestrato per il riconoscimento di tossicità multilingua
     text_model = Detoxify('multilingual')
-    # Modello leggerissimo ed efficiente per la classificazione NSFW visiva
-    image_model = pipeline("image-classification", model="falconsai/nsfw_image_detection")
-    print("✅ Modelli locali pronti all'uso.")
+
+    image_model = pipeline(
+        "image-classification",
+        model="falconsai/nsfw_image_detection"
+    )
+
+    print("✅ Modelli pronti.")
 except Exception as e:
-    print(f"❌ Errore caricamento modelli: {e}")
+    print(f"❌ Errore modelli: {e}")
     sys.exit(1)
 
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
+
+# ==========================
+# HISTORY
+# ==========================
 def load_history():
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r") as f:
                 return json.load(f)
         except:
-            pass
+            return {}
     return {}
 
 def save_history(history):
@@ -48,221 +56,263 @@ def save_history(history):
         json.dump(history, f, indent=4)
 
 def get_ad_hash(ad):
-    content = f"{ad.get('headline', '')}{ad.get('description', '')}{ad.get('media_url', '')}{ad.get('destination_url', '')}"
-    return hashlib.md5(content.encode('utf-8')).hexdigest()
+    content = f"{ad.get('headline','')}{ad.get('description','')}{ad.get('media_url','')}{ad.get('destination_url','')}"
+    return hashlib.md5(content.encode("utf-8")).hexdigest()
 
+
+# ==========================
+# SERVER
+# ==========================
 def get_ads_from_server():
     if not SENTINEL_SECRET_KEY:
-        print("❌ SENTINEL_KEY non configurata. Accesso negato.")
+        print("❌ SENTINEL_KEY mancante")
         return []
 
-    print("📡 Download TOTALE annunci dal server...")
     headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
+
     try:
-        res = requests.get(f"{WORKER_URL}/api/admin/serve_all", headers=headers, timeout=20)
+        res = requests.get(
+            f"{WORKER_URL}/api/admin/serve_all",
+            headers=headers,
+            timeout=20
+        )
+
         if res.status_code == 200:
-            return res.json().get('ads', [])
+            return res.json().get("ads", [])
+
+        print("❌ Worker error:", res.status_code, res.text)
         return []
-    except:
+
+    except Exception as e:
+        print("❌ Connessione fallita:", e)
         return []
+
 
 def flag_ad(ad_id, reason):
-    print(f"🚨 AD FLAGGATO! ID: {ad_id} | Motivo: {reason}")
-    for _ in range(3):
+    print(f"🚨 FLAG {ad_id} -> {reason}")
+
+    for _ in range(2):
         try:
-            requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
+            requests.post(
+                f"{WORKER_URL}/api/report?id={ad_id}",
+                timeout=5
+            )
         except:
             pass
-        time.sleep(0.5)
+        time.sleep(0.3)
 
+
+# ==========================
+# URL SAFETY
+# ==========================
 def is_malicious_url(url):
-    """Controlla domini e pattern notoriamente legati a truffe, phishing e malware."""
-    if not url: return False
-    url_lower = url.lower()
-    
-    bad_tlds = ['.xyz', '.zip', '.click', '.loan', '.top', '.win', '.stream']
-    if any(url_lower.endswith(tld) or (tld + "/") in url_lower for tld in bad_tlds):
-        return True
-        
-    bad_keywords = ['free-money', 'hack', 'crack', 'nude', 'porn', 'xxx', 'sex', 'casino', 'betting', 'phishing']
-    if any(keyword in url_lower for keyword in bad_keywords):
-        return True
-        
-    return False
+    if not url:
+        return False
 
-# ==========================================
-# MOTORE 1: TESTO E URL (DETOXIFY + BLACKLIST)
-# ==========================================
-def analyze_text(ad):
-    url = ad.get('destination_url', '')
-    if is_malicious_url(url):
-        return {"status": "FLAG", "reason": "MALICIOUS_OR_BANNED_URL"}
+    url = url.lower()
 
-    text = f"{ad.get('headline', '')} {ad.get('description', '')}".strip()
-    if not text:
-        return {"status": "PASS", "reason": ""}
-
-    text_lower = text.lower()
-    
-    # KILL-LIST MULTILINGUA (Droga, Armi, Truffe)
-    illegal_keywords = [
-        # ITA
-        'droga', 'armi', 'pistola', 'fucile', 'cocaina', 'marijuana', 'senza ricetta',
-        # ENG
-        'drugs', 'weapons', 'guns', 'rifle', 'cocaine', 'weed', 'meth', 'no prescription',
-        # ESP
-        'drogas', 'armas', 'pistola', 'cocaína'
+    bad_patterns = [
+        ".xyz", ".zip", ".click", ".loan", ".top", ".win",
+        "free-money", "hack", "crack", "casino", "bet", "phishing"
     ]
-    
-    if any(keyword in text_lower for keyword in illegal_keywords):
-        return {"status": "FLAG", "reason": "ILLEGAL_GOODS_DETECTED"}
 
+    return any(p in url for p in bad_patterns)
+
+
+# ==========================
+# TEXT ANALYSIS
+# ==========================
+def analyze_text(ad):
+    url = ad.get("destination_url", "")
+    text = f"{ad.get('headline','')} {ad.get('description','')}".strip()
+
+    # 1. URL check
+    if is_malicious_url(url):
+        return {"status": "FLAG", "reason": "MALICIOUS_URL"}
+
+    # 2. keyword minimal risk filter
+    keywords = ["droga", "pistola", "cocaine", "guns", "sex", "xxx", "porn"]
+    if any(k in text.lower() for k in keywords):
+        return {"status": "FLAG", "reason": "ILLEGAL_KEYWORDS"}
+
+    # 3. ML toxicity model
     try:
-        results = text_model.predict(text)
-        if results['toxicity'] > 0.85 or results['sexual_explicit'] > 0.7 or results['threat'] > 0.75:
-            return {"status": "FLAG", "reason": "TOXIC_OR_EXPLICIT_TEXT"}
+        res = text_model.predict(text)
+
+        if (
+            res.get("toxicity", 0) > 0.85 or
+            res.get("sexual_explicit", 0) > 0.60 or
+            res.get("threat", 0) > 0.75
+        ):
+            return {"status": "FLAG", "reason": "TOXIC_TEXT"}
+
     except Exception as e:
-        print(f"⚠️ Errore analisi testo: {e}")
-        
+        print("⚠️ Detoxify error:", e)
+
     return {"status": "PASS", "reason": ""}
 
-# ==========================================
-# MOTORE 2: MULTIMEDIALE (NSFW ONNX PIPELINE)
-# ==========================================
-def analyze_image_file(file_path):
-    """Analizza una singola immagine e restituisce True se è NSFW."""
+
+# ==========================
+# IMAGE ANALYSIS
+# ==========================
+def analyze_image(file_path):
     try:
         img = Image.open(file_path)
-        img.thumbnail((512, 512)) # Riduce la risoluzione per alleggerire la CPU
+        img.thumbnail((512, 512))
+
         result = image_model(img)
-        # result formato: [{'label': 'nsfw', 'score': 0.9}, {'label': 'normal', 'score': 0.1}]
-        for res in result:
-            if res['label'] == 'nsfw' and res['score'] > 0.75:
-                return True
+
+        scores = {r["label"]: r["score"] for r in result}
+
+        # 🔥 soglia più aggressiva per ads
+        nsfw_score = scores.get("nsfw", 0)
+
+        if nsfw_score > 0.60:
+            return True
+
+        # fallback extra categorie (se presenti)
+        if scores.get("porn", 0) > 0.40:
+            return True
+
         return False
+
     except Exception as e:
-        print(f"⚠️ Errore classificazione immagine: {e}")
+        print("⚠️ Image error:", e)
         return False
 
-def analyze_multimedia_ad(ad):
-    media_url = ad.get('media_url')
-    if not media_url: 
-        return analyze_text(ad)
 
-    print(f"🖼️ Analisi locale per ID: {ad['id']}")
-    
-    # 1. Controlla prima il testo e l'URL (Risparmia CPU se c'è già una violazione)
+# ==========================
+# MULTIMEDIA ANALYSIS
+# ==========================
+def analyze_multimedia_ad(ad):
+    media_url = ad.get("media_url")
+
+    # sempre text-first
     text_res = analyze_text(ad)
     if text_res["status"] == "FLAG":
         return text_res
 
-    # 2. Download Media
+    if not media_url:
+        return text_res
+
+    print(f"🖼️ MEDIA {ad['id']}")
+
     try:
         res = requests.get(media_url, timeout=15)
-        if res.status_code != 200: return None
-        mime_type = res.headers.get("Content-Type") or ""
-        ext = '.jpg' 
-        if 'mp4' in mime_type.lower() or media_url.endswith('.mp4'): ext = '.mp4'
+        if res.status_code != 200:
+            return None
+
+        ext = ".jpg"
+        if "mp4" in res.headers.get("Content-Type", "").lower():
+            ext = ".mp4"
+
     except:
         return None
 
-    temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
-    temp_file.write(res.content)
-    temp_file.close()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+    tmp.write(res.content)
+    tmp.close()
 
-    is_video = ext == '.mp4'
     flagged = False
 
     try:
-        if not is_video:
-            # STRADA A: Analisi Immagine Diretta
-            flagged = analyze_image_file(temp_file.name)
+        # IMAGE
+        if ext != ".mp4":
+            flagged = analyze_image(tmp.name)
+
+        # VIDEO
         else:
-            # STRADA B: Estrazione Frame da Video
-            print(f"🎥 Estrazione frame video in corso...")
-            vidcap = cv2.VideoCapture(temp_file.name)
-            fps = int(vidcap.get(cv2.CAP_PROP_FPS))
-            if fps <= 0: fps = 24
-            
-            frame_count = 0
-            success, image = vidcap.read()
+            vid = cv2.VideoCapture(tmp.name)
+
+            fps = int(vid.get(cv2.CAP_PROP_FPS)) or 24
+            frame_i = 0
+            max_seconds = 10  # 🔥 più leggero per GitHub Actions
+
+            success, frame = vid.read()
+
             while success:
-                # Estrae 1 frame al secondo
-                if frame_count % fps == 0:
-                    frame_path = temp_file.name + f"_frame_{frame_count}.jpg"
-                    cv2.imwrite(frame_path, image)
-                    
-                    if analyze_image_file(frame_path):
+                if frame_i % fps == 0:
+                    frame_path = tmp.name + f"_f.jpg"
+                    cv2.imwrite(frame_path, frame)
+
+                    if analyze_image(frame_path):
                         flagged = True
                         os.remove(frame_path)
-                        break # Ferma subito l'analisi del video se trova un frame illecito
-                        
-                    os.remove(frame_path)
-                
-                success, image = vidcap.read()
-                frame_count += 1
-                
-                # Limite di sicurezza: analizza al massimo i primi 30 secondi (30 frame estratti)
-                if frame_count > fps * 30:
-                    break 
-            
-            vidcap.release()
+                        break
 
-        if flagged:
-            return {"status": "FLAG", "reason": "NSFW_MEDIA_DETECTED"}
-        return {"status": "PASS", "reason": ""}
+                    os.remove(frame_path)
+
+                success, frame = vid.read()
+                frame_i += 1
+
+                if frame_i > fps * max_seconds:
+                    break
+
+            vid.release()
 
     finally:
-        if os.path.exists(temp_file.name):
-            os.remove(temp_file.name)
+        if os.path.exists(tmp.name):
+            os.remove(tmp.name)
 
-# ==========================================
-# GESTORE CENTRALE
-# ==========================================
+    if flagged:
+        return {"status": "FLAG", "reason": "NSFW_MEDIA"}
+
+    return {"status": "PASS", "reason": ""}
+
+
+# ==========================
+# MAIN LOOP
+# ==========================
 def run_sentinel():
     ads = get_ads_from_server()
+
     if not ads:
-        print("📭 Nessun annuncio trovato nel database globale.")
+        print("📭 Nessun annuncio")
         sys.exit(0)
 
     history = load_history()
-    current_time = time.time()
-    
-    ads_to_check = []
-    for ad in ads:
-        ad_hash = get_ad_hash(ad)
-        if ad_hash not in history:
-            ad['hash_signature'] = ad_hash 
-            ads_to_check.append(ad)
+    now = time.time()
 
-    if not ads_to_check:
-        print("✅ Tutti gli annunci in rete sono già stati verificati.")
+    queue = []
+
+    for ad in ads:
+        h = get_ad_hash(ad)
+        if h not in history:
+            ad["hash"] = h
+            queue.append(ad)
+
+    if not queue:
+        print("✅ Nessun nuovo contenuto")
         sys.exit(0)
 
-    # Processa al massimo 50 annunci nuovi per run per non sforare i minuti di GitHub Actions
-    random.shuffle(ads_to_check)
-    ads_to_check = ads_to_check[:50] 
-    
-    print(f"🔍 Sentinel attivato. Elaborazione di {len(ads_to_check)} nuove creatività in locale.")
+    random.shuffle(queue)
+    queue = queue[:50]
 
-    for ad in ads_to_check:
-        if not ad.get('media_url'):
-            res = analyze_text(ad)
-        else:
-            res = analyze_multimedia_ad(ad)
-            
-        if res is not None:
-            if res['status'] == "FLAG":
-                flag_ad(ad['id'], res['reason'])
-            history[ad['hash_signature']] = current_time
+    print(f"🔍 Analisi {len(queue)} ads")
+
+    for ad in queue:
+        try:
+            if ad.get("media_url"):
+                res = analyze_multimedia_ad(ad)
+            else:
+                res = analyze_text(ad)
+
+            if res and res["status"] == "FLAG":
+                flag_ad(ad["id"], res["reason"])
+
+            history[ad["hash"]] = now
+
+        except Exception as e:
+            print("⚠️ error ad:", e)
 
     save_history(history)
-    print("🏁 Controllo completato. Registro aggiornato.")
+    print("🏁 DONE")
     sys.exit(0)
+
 
 if __name__ == "__main__":
     try:
         run_sentinel()
     except Exception as e:
-        print(f"❌ Errore critico finale: {e}")
+        print("❌ CRITICAL:", e)
         sys.exit(1)

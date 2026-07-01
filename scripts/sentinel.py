@@ -182,48 +182,59 @@ def url_risk(url):
 # ==========================
 # MULTIMODAL ANALYSIS
 # ==========================
-def analyze(ad):
+def analyze_ad(ad):
     text = f"{ad.get('headline','')} {ad.get('description','')}"
     url = ad.get("destination_url", "")
+    media_url = ad.get("media_url")
 
-    t = text_risk(text)
-    u = url_risk(url)
+    # ======================
+    # TEXT CHECK (PRIMARY)
+    # ======================
+    t_score = text_risk(text)
 
-    m = 0.0
-    tmp = None
+    if t_score >= 0.60:
+        return {"status": "FLAG", "reason": "TEXT_RISK"}
 
-    media = ad.get("media_url")
+    # ======================
+    # MEDIA CHECK
+    # ======================
+    m_score = 0.0
 
-    if media:
-        try:
-            r = requests.get(media, timeout=15)
+    tmp_file = None
+    try:
+        if media_url:
+            r = requests.get(media_url, timeout=15)
+            ext = ".mp4" if "mp4" in r.headers.get("Content-Type","") else ".jpg"
 
-            ext = ".mp4" if "mp4" in r.headers.get("Content-Type", "") else ".jpg"
-
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-            tmp.write(r.content)
-            tmp.close()
+            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+            tmp_file.write(r.content)
+            tmp_file.close()
 
             if ext == ".mp4":
-                cap = cv2.VideoCapture(tmp.name)
-
+                cap = cv2.VideoCapture(tmp_file.name)
                 fps = int(cap.get(cv2.CAP_PROP_FPS)) or 24
                 i = 0
 
                 while True:
-                    ok, frame = cap.read()
-                    if not ok:
+                    ret, frame = cap.read()
+                    if not ret:
                         break
 
                     if i % fps == 0:
-                        f = tmp.name + "_f.jpg"
-                        cv2.imwrite(f, frame)
+                        fpath = tmp_file.name + "_f.jpg"
+                        cv2.imwrite(fpath, frame)
 
-                        img_r = image_risk(f)
-                        clip_r = clip_risk(f)
+                        img_score = image_risk(fpath)
+                        clip_score = clip_risk(fpath)
 
-                        m = max(m, img_r, clip_r)
-                        os.remove(f)
+                        frame_score = max(img_score, clip_score)
+
+                        if frame_score >= 0.65:
+                            cap.release()
+                            return {"status": "FLAG", "reason": "MEDIA_RISK"}
+
+                        m_score = max(m_score, frame_score)
+                        os.remove(fpath)
 
                     i += 1
                     if i > fps * 10:
@@ -232,26 +243,37 @@ def analyze(ad):
                 cap.release()
 
             else:
-                m = max(image_risk(tmp.name), clip_risk(tmp.name))
+                img_score = image_risk(tmp_file.name)
+                clip_score = clip_risk(tmp_file.name)
 
-        except:
-            m = 0.0
+                m_score = max(img_score, clip_score)
 
-        finally:
-            if tmp and os.path.exists(tmp.name):
-                os.remove(tmp.name)
+                if m_score >= 0.65:
+                    return {"status": "FLAG", "reason": "MEDIA_RISK"}
 
-    # ==========================
-    # FINAL SCORE (CALIBRATED)
-    # ==========================
-    score = (
-        t * 0.45 +
-        m * 0.45 +
-        u * 0.10
-    )
+    except:
+        m_score = 0.0
 
-    if score > 0.72:
-        return {"status": "FLAG", "reason": f"RISK_{score:.2f}"}
+    finally:
+        if tmp_file and os.path.exists(tmp_file.name):
+            os.remove(tmp_file.name)
+
+    # ======================
+    # URL CHECK (WEAK SIGNAL)
+    # ======================
+    u_score = url_risk(url)
+
+    # URL da solo NON banna mai
+    if u_score >= 0.75:
+        return {"status": "FLAG", "reason": "URL_RISK"}
+
+    # ======================
+    # FINAL SOFT COMBINATION
+    # ======================
+    combined = max(t_score, m_score)
+
+    if combined >= 0.55:
+        return {"status": "FLAG", "reason": "COMBINED_RISK"}
 
     return {"status": "PASS", "reason": ""}
 

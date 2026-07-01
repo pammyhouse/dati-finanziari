@@ -97,7 +97,6 @@ def analyze_text_batch(ads_batch):
     print("🧠 [TESTO + URL] Inviando batch a GROQ...")
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        # Modello di produzione testuale stabile
         payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
         if res.status_code == 200:
@@ -146,15 +145,18 @@ def analyze_multimedia_ad(ad):
     single_ad_prompt = POLICY_PROMPT + f"\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
     # --------------------------------------------------------
-    # STRADA A: IMMAGINI -> GROQ VISION (PRODUZIONE)
+    # STRADA A: IMMAGINI -> GROQ VISION (LLAMA 4 SCOUT)
+    # Nessun limite di quota. Nessun limite Google.
     # --------------------------------------------------------
     if not is_video and GROQ_API_KEY:
         print(f"👁️ [GROQ VISION] Analisi immagine in corso...")
         try:
+            # Converte immagine a Base64
             base64_image = base64.b64encode(res.content).decode('utf-8')
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
             payload = {
-                "model": "llama-3.2-11b-vision-instruct", # IL NUOVO MODELLO UFFICIALE SUPPORTATO
+                # Modello di produzione Attivo Ufficiale Groq 2026
+                "model": "llama-4-scout-17b-16e-instruct", 
                 "messages": [{
                     "role": "user",
                     "content": [
@@ -174,18 +176,18 @@ def analyze_multimedia_ad(ad):
                 else:
                     return {"status": "PASS", "reason": ""}
             else:
-                print(f"⚠️ Errore API Groq Vision ({vision_res.status_code}): {vision_res.text}")
-                print("🔄 Tentativo Fallback su Gemini...")
+                print(f"⚠️ Errore API Groq Vision ({vision_res.status_code}): Fallback su Gemini...")
         except Exception as e:
             print(f"⚠️ Eccezione Groq Vision: {e}. Fallback su Gemini...")
 
     # --------------------------------------------------------
-    # STRADA B: VIDEO O FALLBACK -> GEMINI (NUOVO SDK)
+    # STRADA B: VIDEO -> GEMINI 2.5 FLASH
+    # Entra in azione SOLO per i file video (.mp4)
     # --------------------------------------------------------
     if not GEMINI_API_KEY: 
         return None
         
-    print(f"🎥 [GEMINI] Analisi multimodale in corso...")
+    print(f"🎥 [GEMINI] Analisi multimodale video in corso...")
     
     temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     temp_file.write(res.content)
@@ -197,17 +199,16 @@ def analyze_multimedia_ad(ad):
         uploaded_file = client.files.upload(file=temp_file.name)
         
         if is_video:
-            time.sleep(3)
+            time.sleep(4)
 
-        # CASCATA DEI MODELLI: Prova prima i modelli gratuiti e ad alta disponibilità
-        models_to_try = ['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.5-flash']
-        response_text = None
+        max_retries = 3
+        delay = 10 
         
-        for model_name in models_to_try:
+        for attempt in range(max_retries):
             try:
-                print(f"   -> Tentativo con {model_name}...")
+                # Usiamo solo l'unico modello che sappiamo per certo funzionare sul tuo account
                 response = client.models.generate_content(
-                    model=model_name,
+                    model='gemini-2.5-flash',
                     contents=[uploaded_file, single_ad_prompt],
                     config=types.GenerateContentConfig(temperature=0.1)
                 )
@@ -216,29 +217,29 @@ def analyze_multimedia_ad(ad):
                     return {"status": "FLAG", "reason": "BLOCKED_BY_GOOGLE_SAFETY (Extreme Content Detected)"}
                 
                 response_text = response.text.strip().upper()
-                break # Successo, esce dal loop dei modelli
                 
+                if "FLAG" in response_text:
+                    reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
+                    return {"status": "FLAG", "reason": reason_match.group(1).strip() if reason_match else "Policy Violation"}
+                else:
+                    return {"status": "PASS", "reason": ""}
+                    
             except Exception as e:
                 err_msg = str(e).upper()
-                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "0" in err_msg:
-                    print(f"      ⚠️ Quota esaurita su {model_name}.")
-                    continue # Prova il modello successivo
-                elif "404" in err_msg:
-                    print(f"      ⚠️ Modello {model_name} non trovato su questo endpoint.")
-                    continue
-                else:
-                    raise e # Se è un altro errore, esce
-
-        if not response_text:
-            print("❌ Tutti i modelli Gemini hanno fallito o esaurito le quote.")
-            return None
-
-        if "FLAG" in response_text:
-            reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
-            return {"status": "FLAG", "reason": reason_match.group(1).strip() if reason_match else "Policy Violation"}
-        else:
-            return {"status": "PASS", "reason": ""}
+                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                    print(f"      ⚠️ Quota Gemini esaurita.")
+                    return None
+                elif "503" in err_msg:
+                    if attempt < max_retries - 1:
+                        print(f"🕒 Sovraccarico server. Attendo {delay}s e riprovo...")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                print(f"❌ Errore API Gemini: {e}")
+                return None
                 
+        return None 
+        
     finally:
         if uploaded_file:
             try: client.files.delete(name=uploaded_file.name)
@@ -270,7 +271,7 @@ def run_sentinel():
         sys.exit(0)
 
     random.shuffle(ads_to_check)
-    ads_to_check = ads_to_check[:30] 
+    ads_to_check = ads_to_check[:40] # Analizza fino a 40 creatività nuove per esecuzione
     
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
     ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
@@ -288,7 +289,7 @@ def run_sentinel():
                     if res and res['status'] == "FLAG":
                         flag_ad(ad['id'], res['reason'])
                     if res: history[ad['hash_signature']] = current_time
-            time.sleep(2)
+            time.sleep(1)
 
     if ads_with_media:
         print("🎬 Inizio analisi annunci multimediali...")

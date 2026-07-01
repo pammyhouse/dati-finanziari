@@ -7,9 +7,7 @@ import re
 import tempfile
 import sys
 import hashlib
-import base64
-from google import genai
-from google.genai import types
+import google.generativeai as genai  # Utilizzo dell'SDK stabile per la quota 1500/day
 
 # ==========================================
 # CONFIGURAZIONI E VARIABILI D'AMBIENTE
@@ -20,6 +18,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY") 
 HISTORY_FILE = "checked_ads.json"
 BATCH_SIZE = 10
+
+# Inizializzazione stabile di Google Gemini 1.5
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -35,12 +37,13 @@ def save_history(history):
         json.dump(history, f, indent=4)
 
 def get_ad_hash(ad):
+    """Genera l'impronta digitale dell'ad. Se cambiano testo o media, l'hash cambia e viene ricontrollato."""
     content = f"{ad.get('headline', '')}{ad.get('description', '')}{ad.get('media_url', '')}{ad.get('destination_url', '')}"
     return hashlib.md5(content.encode('utf-8')).hexdigest()
 
 def get_ads_from_server():
     if not SENTINEL_SECRET_KEY:
-        print("❌ SENTINEL_KEY non configurata. Accesso negato.")
+        print("❌ SENTINEL_KEY non configurata nei secrets. Accesso totale negato.")
         return []
 
     print("📡 Download TOTALE annunci dal server (Bypass crediti/sospensioni)...")
@@ -65,6 +68,9 @@ def flag_ad(ad_id, reason):
             pass
         time.sleep(0.5)
 
+# ==========================================
+# PROMPT TUNING: SEVERO MA TOLLERANTE
+# ==========================================
 POLICY_PROMPT = """You are a Trust & Safety AI Sentinel. 
 Your ONLY job is to catch SEVERE Tier-1 violations. DO NOT act as a strict marketing compliance officer.
 
@@ -86,28 +92,25 @@ or
 [ID] -> FLAG: [Brief Reason]
 """
 
-def analyze_text_batch(ads_batch, provider):
+# ==========================================
+# MOTORE 1: ANALISI SOLO TESTO E URL (GROQ)
+# ==========================================
+def analyze_text_batch(ads_batch):
     prompt = POLICY_PROMPT + "\nHere is the batch of text-only ads to check:\n"
     for ad in ads_batch:
         prompt += f"\n--- ID: {ad['id']}\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
-    print(f"🧠 [TESTO + URL] Inviando batch a {provider.upper()}...")
-    response_text = ""
-    
+    print("🧠 [TESTO + URL] Inviando batch a GROQ...")
     try:
-        if provider == 'groq':
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
-            if res.status_code == 200:
-                response_text = res.json()['choices'][0]['message']['content']
-            else:
-                return None
-    except Exception as e:
-        print(f"❌ Errore rete con {provider}: {e}")
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
+        res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+        if res.status_code == 200:
+            response_text = res.json()['choices'][0]['message']['content']
+        else:
+            return None
+    except:
         return None
-
-    if not response_text: return None
 
     results = {}
     for ad in ads_batch:
@@ -119,48 +122,37 @@ def analyze_text_batch(ads_batch, provider):
             results[ad_id] = {"status": status, "reason": reason}
         else:
             results[ad_id] = {"status": "PASS", "reason": ""}
-            
     return results
 
+# ==========================================
+# MOTORE 2: ANALISI MULTIMEDIALE + URL (IBRIDO)
+# ==========================================
 def analyze_multimedia_ad(ad):
-    print(f"🖼️ [MEDIA + URL] Inizio analisi per ID: {ad['id']}")
-    
     media_url = ad.get('media_url')
     if not media_url: return None
 
     try:
         res = requests.get(media_url, timeout=10)
-        if res.status_code != 200:
-            print(f"⚠️ Impossibile scaricare il media per {ad['id']}.")
-            return None
-            
+        if res.status_code != 200: return None
         mime_type = res.headers.get("Content-Type") or ""
+        
         ext = '.jpg' 
         if 'png' in mime_type.lower(): ext = '.png'
         elif 'gif' in mime_type.lower(): ext = '.gif'
         elif 'mp4' in mime_type.lower() or media_url.endswith('.mp4'): ext = '.mp4'
         elif 'webp' in mime_type.lower(): ext = '.webp'
-            
-    except Exception as e:
-        print(f"❌ Errore download asset: {e}")
+    except:
         return None
 
     is_video = 'video' in mime_type or ext == '.mp4'
-    single_ad_prompt = POLICY_PROMPT + f"""
-Here is the single multimedia ad content to review:
-Ad Headline: {ad.get('headline','')}
-Ad Description: {ad.get('description','')}
-Destination URL: {ad.get('destination_url','')}
+    single_ad_prompt = POLICY_PROMPT + f"\nHeadline: {ad.get('headline','')}\nDesc: {ad.get('description','')}\nURL: {ad.get('destination_url','')}\n"
 
-Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it violates the Tier-1 rules."""
-
-    # ========================================================
-    # STRADA 1: IMMAGINI (Usiamo GROQ VISION, 100% Gratis e Veloce)
-    # ========================================================
+    # --------------------------------------------------------
+    # STRADA A: IMMAGINE -> GROQ VISION (Gratis, No limiti di 20)
+    # --------------------------------------------------------
     if not is_video and GROQ_API_KEY:
-        print("👁️ Utilizzo GROQ Vision per l'immagine...")
+        print(f"👁️ [GROQ VISION] Analisi immagine per ID: {ad['id']}")
         try:
-            base64_image = base64.b64encode(res.content).decode('utf-8')
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
             payload = {
                 "model": "llama-3.2-11b-vision-preview",
@@ -168,100 +160,67 @@ Reply EXACTLY with "PASS" if everything is safe, or "FLAG: [Reason]" if it viola
                     "role": "user",
                     "content": [
                         {"type": "text", "text": single_ad_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
+                        {"type": "image_url", "image_url": {"url": media_url}} # Passa l'URL pubblico direttamente
                     ]
                 }],
                 "temperature": 0.1
             }
-            
             vision_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
-            
             if vision_res.status_code == 200:
                 response_text = vision_res.json()['choices'][0]['message']['content'].strip().upper()
                 if "FLAG" in response_text:
                     reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
-                    reason = reason_match.group(1).strip() if reason_match else "Policy Violation"
-                    return {"status": "FLAG", "reason": reason}
+                    return {"status": "FLAG", "reason": reason_match.group(1).strip() if reason_match else "Policy Violation"}
                 else:
                     return {"status": "PASS", "reason": ""}
-            else:
-                print(f"⚠️ Errore Groq Vision ({vision_res.status_code}). Fallback su Gemini...")
+            print(f"⚠️ Groq Vision Status {vision_res.status_code}. Fallback su Gemini...")
         except Exception as e:
-            print(f"⚠️ Errore Groq Vision: {e}. Fallback su Gemini...")
+            print(f"⚠️ Errore Groq Vision ({e}). Fallback su Gemini...")
 
-    # ========================================================
-    # STRADA 2: VIDEO O FALLBACK (Usiamo GEMINI 2.5 FLASH)
-    # ========================================================
-    if not GEMINI_API_KEY:
-        return None
+    # --------------------------------------------------------
+    # STRADA B: VIDEO O FALLBACK -> GEMINI 1.5 FLASH (1500 req/day)
+    # --------------------------------------------------------
+    if not GEMINI_API_KEY: return None
+    print(f"🎥 [GEMINI 1.5 FLASH] Analisi multimodale per ID: {ad['id']}")
 
-    print(f"🎥 Utilizzo GEMINI 2.5 Flash per il file multimediale...")
     temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     temp_file.write(res.content)
     temp_file.close()
-    
     uploaded_file = None
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        uploaded_file = client.files.upload(file=temp_file.name)
-        
-        if is_video:
-            time.sleep(3) 
+        # Caricamento stabile tramite l'SDK classico
+        uploaded_file = genai.upload_file(path=temp_file.name)
+        if is_video: time.sleep(3)
 
-        max_retries = 3
-        delay = 10 
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content([uploaded_file, single_ad_prompt])
         
-        for attempt in range(max_retries):
-            try:
-                # Usiamo 2.5-flash perché sappiamo che sul tuo account funziona (anche se limitato a 20/day)
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[uploaded_file, single_ad_prompt],
-                    config=types.GenerateContentConfig(temperature=0.1)
-                )
-                
-                if not response or not response.text:
-                    return {"status": "FLAG", "reason": "BLOCKED_BY_GOOGLE_SAFETY (Extreme Content Detected)"}
-                
-                response_text = response.text.strip().upper()
-                
-                if "FLAG" in response_text:
-                    reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
-                    reason = reason_match.group(1).strip() if reason_match else "Policy Violation"
-                    return {"status": "FLAG", "reason": reason}
-                else:
-                    return {"status": "PASS", "reason": ""}
-                    
-            except Exception as e:
-                err_msg = str(e).upper()
-                if any(x in err_msg for x in ["503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"]):
-                    if attempt < max_retries - 1:
-                        print(f"🕒 Sovraccarico server o rate limit Google. Attendo {delay}s e riprovo...")
-                        time.sleep(delay)
-                        delay *= 2
-                        continue
-                
-                print(f"❌ Errore API Gemini Multimodale: {e}")
-                return None
-                
-        return None 
-        
+        if not response or not response.text:
+            return {"status": "FLAG", "reason": "BLOCKED_BY_GOOGLE_SAFETY (Potential Adult/Extreme material)"}
+
+        response_text = response.text.strip().upper()
+        if "FLAG" in response_text:
+            reason_match = re.search(r"FLAG\s*(?::|->)?\s*(.*)", response_text, re.IGNORECASE)
+            return {"status": "FLAG", "reason": reason_match.group(1).strip() if reason_match else "Policy Violation"}
+        return {"status": "PASS", "reason": ""}
+    except Exception as e:
+        print(f"❌ Errore Gemini 1.5 per {ad['id']}: {e}")
+        return None
     finally:
         if uploaded_file:
-            try: client.files.delete(name=uploaded_file.name)
+            try: uploaded_file.delete()
             except: pass
-        if os.path.exists(temp_file.name):
-            os.remove(temp_file.name)
+        if os.path.exists(temp_file.name): os.remove(temp_file.name)
 
 # ==========================================
-# GESTORE CENTRALE
+# GESTORE PRINCIPALE
 # ==========================================
 def run_sentinel():
     ads = get_ads_from_server()
     if not ads:
-        print("📭 Nessun annuncio trovato nel database globale. Esco.")
-        return
+        print("📭 Nessun annuncio trovato nel database globale.")
+        sys.exit(0)
 
     history = load_history()
     current_time = time.time()
@@ -274,7 +233,7 @@ def run_sentinel():
             ads_to_check.append(ad)
 
     if not ads_to_check:
-        print("✅ Tutti gli annunci sono puliti e già stati verificati.")
+        print("✅ Tutti gli annunci in rete sono già stati verificati e non modificati.")
         sys.exit(0)
 
     random.shuffle(ads_to_check)
@@ -283,12 +242,12 @@ def run_sentinel():
     ads_text_only = [ad for ad in ads_to_check if not ad.get('media_url')]
     ads_with_media = [ad for ad in ads_to_check if ad.get('media_url')]
     
-    print(f"🔍 Sentinel attivato. Da analizzare (Solo Nuovi/Modificati): {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
+    print(f"🔍 Sentinel attivato. Da analizzare: {len(ads_text_only)} (Solo Testo), {len(ads_with_media)} (Con Media).")
 
-    if ads_text_only:
+    if ads_text_only and GROQ_API_KEY:
         batches = [ads_text_only[i:i + BATCH_SIZE] for i in range(0, len(ads_text_only), BATCH_SIZE)]
         for batch in batches:
-            results = analyze_text_batch(batch, 'groq')
+            results = analyze_text_batch(batch)
             if results is not None:
                 print(f"✅ Batch testo/URL analizzato con GROQ.")
                 for ad in batch:
@@ -302,14 +261,12 @@ def run_sentinel():
         print("🎬 Inizio analisi annunci multimediali...")
         for ad in ads_with_media:
             res = analyze_multimedia_ad(ad)
-            
             if res is not None:
                 if res['status'] == "FLAG":
                     flag_ad(ad['id'], res['reason'])
                 history[ad['hash_signature']] = current_time
             else:
-                print(f"⚠️ Analisi fallita per {ad['id']}. Riproverò alla prossima esecuzione.")
-                
+                print(f"⚠️ Analisi fallita temporaneamente per {ad['id']}.")
             time.sleep(2)
             
     save_history(history)

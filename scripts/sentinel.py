@@ -2,317 +2,189 @@ import os
 import json
 import time
 import requests
-import random
-import re
+import base64
 import tempfile
-import sys
-import hashlib
 import cv2
-from PIL import Image
-import torch
-from transformers import pipeline
-from detoxify import Detoxify
+import sys
 
 # ==========================
-# CONFIG
+# CONFIGURATION - GITHUB SECRETS
 # ==========================
 WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
+
+# Le credenziali vengono lette in modo sicuro dalle variabili d'ambiente
 SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY")
-HISTORY_FILE = "checked_ads.json"
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
 
-# 🔥 stabilità CPU GitHub Actions
-torch.set_num_threads(1)
-
-print("⏳ Inizializzazione modelli AI locali...")
-
-try:
-    text_model = Detoxify('multilingual')
-
-    image_model = pipeline(
-        "image-classification",
-        model="falconsai/nsfw_image_detection"
-    )
-
-    print("✅ Modelli pronti.")
-except Exception as e:
-    print(f"❌ Errore modelli: {e}")
+if not all([SENTINEL_SECRET_KEY, CF_ACCOUNT_ID, CF_API_TOKEN]):
+    print("❌ ERRORE CRITICO: Credenziali mancanti. Assicurati di aver configurato i GitHub Secrets.")
     sys.exit(1)
 
+# Modelli Cloudflare
+VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
+TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+
+print("🤖 Avvio AdSwap Sentinel AI...")
 
 # ==========================
-# HISTORY
+# HELPER: CLOUDFLARE AI
 # ==========================
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+def ask_cloudflare_ai(text_prompt, base64_images=None):
+    if base64_images:
+        url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{VISION_MODEL}"
+        content = []
+        # Aggiungiamo tutte le immagini (se video, saranno 3 frame)
+        for b64_img in base64_images:
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}})
+        content.append({"type": "text", "text": text_prompt})
+    else:
+        url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{TEXT_MODEL}"
+        content = text_prompt
 
-def save_history(history):
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=4)
+    headers = {
+        "Authorization": f"Bearer {CF_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
 
-def get_ad_hash(ad):
-    content = f"{ad.get('headline','')}{ad.get('description','')}{ad.get('media_url','')}{ad.get('destination_url','')}"
-    return hashlib.md5(content.encode("utf-8")).hexdigest()
-
-
-# ==========================
-# SERVER
-# ==========================
-def get_ads_from_server():
-    if not SENTINEL_SECRET_KEY:
-        print("❌ SENTINEL_KEY mancante")
-        return []
-
-    headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
+    payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a strict and highly accurate advertising moderation AI. You must analyze the ad content (text, URL, and images if provided). Flag the ad if it contains or promotes: NSFW (nudity, pornography), illegal drugs, weapons, graphic violence, malware, phishing, or obvious scams. Otherwise, pass it. You must reply ONLY with a valid JSON in this exact format: {\"status\": \"PASS\" or \"FLAG\", \"reason\": \"Brief explanation\"}. Do not add markdown blocks or any other text."
+            },
+            {
+                "role": "user",
+                "content": content
+            }
+        ]
+    }
 
     try:
-        res = requests.get(
-            f"{WORKER_URL}/api/admin/serve_all",
-            headers=headers,
-            timeout=20
-        )
-
-        if res.status_code == 200:
-            return res.json().get("ads", [])
-
-        print("❌ Worker error:", res.status_code, res.text)
-        return []
-
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        res_json = response.json()
+        
+        if response.status_code == 200 and res_json.get("success"):
+            ai_response = res_json["result"]["response"]
+            # Puliamo eventuali markdown residui (es. ```json ... ```) restituiti dall'AI
+            clean_json = ai_response.replace("```json", "").replace("```", "").strip()
+            return json.loads(clean_json)
+        else:
+            print(f"❌ Errore API Cloudflare: {response.text}")
+            return {"status": "FLAG", "reason": "AI_API_ERROR"}
     except Exception as e:
-        print("❌ Connessione fallita:", e)
-        return []
-
-
-def flag_ad(ad_id, reason):
-    print(f"🚨 FLAG {ad_id} -> {reason}")
-
-    for _ in range(2):
-        try:
-            requests.post(
-                f"{WORKER_URL}/api/report?id={ad_id}",
-                timeout=5
-            )
-        except:
-            pass
-        time.sleep(0.3)
-
+        print(f"❌ Errore di connessione o Parsing JSON dell'AI: {e}")
+        return {"status": "FLAG", "reason": "PARSE_ERROR"}
 
 # ==========================
-# URL SAFETY
+# MEDIA PROCESSING
 # ==========================
-def is_malicious_url(url):
-    if not url:
-        return False
-
-    url = url.lower()
-
-    bad_patterns = [
-        ".xyz", ".zip", ".click", ".loan", ".top", ".win",
-        "free-money", "hack", "crack", "casino", "bet", "phishing"
-    ]
-
-    return any(p in url for p in bad_patterns)
-
-
-# ==========================
-# TEXT ANALYSIS
-# ==========================
-def analyze_text(ad):
-    url = ad.get("destination_url", "")
-    text = f"{ad.get('headline','')} {ad.get('description','')}".strip()
-
-    # 1. URL check
-    if is_malicious_url(url):
-        return {"status": "FLAG", "reason": "MALICIOUS_URL"}
-
-    # 2. keyword minimal risk filter
-    keywords = ["droga", "pistola", "cocaine", "guns", "sex", "xxx", "porn"]
-    if any(k in text.lower() for k in keywords):
-        return {"status": "FLAG", "reason": "ILLEGAL_KEYWORDS"}
-
-    # 3. ML toxicity model
-    try:
-        res = text_model.predict(text)
-
-        if (
-            res.get("toxicity", 0) > 0.85 or
-            res.get("sexual_explicit", 0) > 0.60 or
-            res.get("threat", 0) > 0.75
-        ):
-            return {"status": "FLAG", "reason": "TOXIC_TEXT"}
-
-    except Exception as e:
-        print("⚠️ Detoxify error:", e)
-
-    return {"status": "PASS", "reason": ""}
-
-
-# ==========================
-# IMAGE ANALYSIS
-# ==========================
-def analyze_image(file_path):
-    try:
-        img = Image.open(file_path)
-        img.thumbnail((512, 512))
-
-        result = image_model(img)
-
-        scores = {r["label"]: r["score"] for r in result}
-
-        # 🔥 soglia più aggressiva per ads
-        nsfw_score = scores.get("nsfw", 0)
-
-        if nsfw_score > 0.60:
-            return True
-
-        # fallback extra categorie (se presenti)
-        if scores.get("porn", 0) > 0.40:
-            return True
-
-        return False
-
-    except Exception as e:
-        print("⚠️ Image error:", e)
-        return False
-
-
-# ==========================
-# MULTIMEDIA ANALYSIS
-# ==========================
-def analyze_multimedia_ad(ad):
-    media_url = ad.get("media_url")
-
-    # sempre text-first
-    text_res = analyze_text(ad)
-    if text_res["status"] == "FLAG":
-        return text_res
-
-    if not media_url:
-        return text_res
-
-    print(f"🖼️ MEDIA {ad['id']}")
-
+def extract_frames_base64(media_url):
+    """Scarica il file e, se immagine restituisce 1 frame base64, se video restituisce 3 frame."""
     try:
         res = requests.get(media_url, timeout=15)
         if res.status_code != 200:
             return None
 
         ext = ".jpg"
-        if "mp4" in res.headers.get("Content-Type", "").lower():
+        if "mp4" in res.headers.get("Content-Type", "").lower() or media_url.endswith(".mp4"):
             ext = ".mp4"
 
-    except:
+        # Salva in un file temporaneo
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(res.content)
+            tmp_path = tmp.name
+
+        base64_frames = []
+
+        if ext == ".mp4":
+            vid = cv2.VideoCapture(tmp_path)
+            total_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
+            # Prendiamo 3 frame significativi dal video
+            frame_indices = [int(total_frames * 0.1), int(total_frames * 0.5), int(total_frames * 0.9)]
+            
+            for idx in frame_indices:
+                vid.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                success, frame = vid.read()
+                if success:
+                    # Rimpiccioliamo a 512x512 per risparmiare token ed evitare errori di Payload Size
+                    frame = cv2.resize(frame, (512, 512), interpolation=cv2.INTER_AREA)
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    base64_frames.append(base64.b64encode(buffer).decode('utf-8'))
+            vid.release()
+        else:
+            # Immagine statica
+            img = cv2.imread(tmp_path)
+            if img is not None:
+                img = cv2.resize(img, (512, 512), interpolation=cv2.INTER_AREA)
+                _, buffer = cv2.imencode('.jpg', img)
+                base64_frames.append(base64.b64encode(buffer).decode('utf-8'))
+
+        os.remove(tmp_path)
+        return base64_frames if base64_frames else None
+
+    except Exception as e:
+        print(f"⚠️ Errore processamento media: {e}")
         return None
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-    tmp.write(res.content)
-    tmp.close()
-
-    flagged = False
-
+# ==========================
+# ACTIONS
+# ==========================
+def approve_ad(ad_id):
+    print(f"✅ APPROVATO: {ad_id}")
     try:
-        # IMAGE
-        if ext != ".mp4":
-            flagged = analyze_image(tmp.name)
+        requests.post(f"{WORKER_URL}/api/admin/creatives/approve?id={ad_id}", headers={"X-Sentinel-Key": SENTINEL_SECRET_KEY}, timeout=10)
+    except: pass
 
-        # VIDEO
-        else:
-            vid = cv2.VideoCapture(tmp.name)
-
-            fps = int(vid.get(cv2.CAP_PROP_FPS)) or 24
-            frame_i = 0
-            max_seconds = 10  # 🔥 più leggero per GitHub Actions
-
-            success, frame = vid.read()
-
-            while success:
-                if frame_i % fps == 0:
-                    frame_path = tmp.name + f"_f.jpg"
-                    cv2.imwrite(frame_path, frame)
-
-                    if analyze_image(frame_path):
-                        flagged = True
-                        os.remove(frame_path)
-                        break
-
-                    os.remove(frame_path)
-
-                success, frame = vid.read()
-                frame_i += 1
-
-                if frame_i > fps * max_seconds:
-                    break
-
-            vid.release()
-
-    finally:
-        if os.path.exists(tmp.name):
-            os.remove(tmp.name)
-
-    if flagged:
-        return {"status": "FLAG", "reason": "NSFW_MEDIA"}
-
-    return {"status": "PASS", "reason": ""}
-
+def flag_ad(ad_id, reason):
+    print(f"🚨 FLAGGATO ({reason}): {ad_id}")
+    # Chiama l'API report 10 volte consecutive per farlo finire subito in stato 'Flagged' (necessari 3 report nel DB)
+    for _ in range(10):
+        try:
+            requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
+            time.sleep(0.2)
+        except: pass
 
 # ==========================
 # MAIN LOOP
 # ==========================
 def run_sentinel():
-    ads = get_ads_from_server()
+    headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
+    
+    # 1. Recupera SOLO gli annunci in attesa di revisione ("pending")
+    try:
+        res = requests.get(f"{WORKER_URL}/api/admin/creatives/pending", headers=headers, timeout=20)
+        ads = res.json()
+    except Exception as e:
+        print(f"❌ Errore di connessione al Worker: {e}")
+        return
 
     if not ads:
-        print("📭 Nessun annuncio")
-        sys.exit(0)
+        print("📭 Nessun annuncio in coda di revisione. Termino.")
+        return
 
-    history = load_history()
-    now = time.time()
-
-    queue = []
+    print(f"🔍 Trovati {len(ads)} annunci 'pending' da revisionare.")
 
     for ad in ads:
-        h = get_ad_hash(ad)
-        if h not in history:
-            ad["hash"] = h
-            queue.append(ad)
+        ad_id = ad["id"]
+        print(f"\n⏳ Analisi annuncio: {ad.get('app_name')}...")
 
-    if not queue:
-        print("✅ Nessun nuovo contenuto")
-        sys.exit(0)
+        text_prompt = f"App Name: {ad.get('app_name')}\nHeadline: {ad.get('headline')}\nDescription: {ad.get('description')}\nDestination URL: {ad.get('destination_url')}"
 
-    random.shuffle(queue)
-    queue = queue[:50]
+        base64_images = None
+        if ad.get("media_url"):
+            base64_images = extract_frames_base64(ad["media_url"])
 
-    print(f"🔍 Analisi {len(queue)} ads")
+        # Chiama l'Intelligenza Artificiale di Cloudflare
+        ai_verdict = ask_cloudflare_ai(text_prompt, base64_images)
 
-    for ad in queue:
-        try:
-            if ad.get("media_url"):
-                res = analyze_multimedia_ad(ad)
-            else:
-                res = analyze_text(ad)
+        if ai_verdict.get("status") == "PASS":
+            approve_ad(ad_id)
+        else:
+            reason = ai_verdict.get("reason", "Violazione Sconosciuta o non determinabile.")
+            flag_ad(ad_id, reason)
 
-            if res and res["status"] == "FLAG":
-                flag_ad(ad["id"], res["reason"])
-
-            history[ad["hash"]] = now
-
-        except Exception as e:
-            print("⚠️ error ad:", e)
-
-    save_history(history)
-    print("🏁 DONE")
-    sys.exit(0)
-
+    print("\n🏁 Revisione automatica completata.")
 
 if __name__ == "__main__":
-    try:
-        run_sentinel()
-    except Exception as e:
-        print("❌ CRITICAL:", e)
-        sys.exit(1)
+    run_sentinel()

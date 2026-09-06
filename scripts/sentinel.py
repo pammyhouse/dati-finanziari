@@ -2,17 +2,14 @@ import os
 import json
 import time
 import requests
-import base64
-import tempfile
-import cv2
+import re
 import sys
 
 # ==========================
-# CONFIGURATION - GITHUB SECRETS
+# CONFIGURATION - SECRETS & LIMITS
 # ==========================
 WORKER_URL = "https://adswap.api-tradegpt.workers.dev"
 
-# Le credenziali vengono lette in modo sicuro dalle variabili d'ambiente
 SENTINEL_SECRET_KEY = os.environ.get("SENTINEL_KEY")
 CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
 CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
@@ -21,8 +18,11 @@ if not all([SENTINEL_SECRET_KEY, CF_ACCOUNT_ID, CF_API_TOKEN]):
     print("❌ ERRORE CRITICO: Credenziali mancanti. Assicurati di aver configurato i GitHub Secrets.")
     sys.exit(1)
 
-# Modelli Cloudflare - FIX: Sostituito Llama 3.2 Vision (Bannato in UE) con LLaVA (Open e globale)
-VISION_MODEL = "@cf/llava-hf/llava-1.5-7b-hf"
+# PROTEZIONE COSTI: Massimo 5 annunci ad ogni avvio.
+# Girando ogni ora sono max 120 annunci/giorno -> Consumo: ~500 neuroni/giorno (Limite gratis: 10.000/giorno). Costo: $0.00.
+MAX_ADS_PER_RUN = 50
+
+# Usiamo il modello Llama 3.1 8B (Nessun blocco Europeo, precisissimo con i JSON)
 TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
 
 print("🤖 Avvio AdSwap Sentinel AI...")
@@ -30,18 +30,9 @@ print("🤖 Avvio AdSwap Sentinel AI...")
 # ==========================
 # HELPER: CLOUDFLARE AI
 # ==========================
-def ask_cloudflare_ai(text_prompt, base64_images=None):
-    if base64_images:
-        url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{VISION_MODEL}"
-        content = []
-        # Aggiungiamo tutte le immagini (se video, saranno 3 frame)
-        for b64_img in base64_images:
-            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}})
-        content.append({"type": "text", "text": text_prompt})
-    else:
-        url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{TEXT_MODEL}"
-        content = text_prompt
-
+def ask_cloudflare_ai(text_prompt):
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{TEXT_MODEL}"
+    
     headers = {
         "Authorization": f"Bearer {CF_API_TOKEN}",
         "Content-Type": "application/json"
@@ -51,11 +42,11 @@ def ask_cloudflare_ai(text_prompt, base64_images=None):
         "messages": [
             {
                 "role": "system",
-                "content": "You are a strict and highly accurate advertising moderation AI. You must analyze the ad content (text, URL, and images if provided). Flag the ad if it contains or promotes: NSFW (nudity, pornography), illegal drugs, weapons, graphic violence, malware, phishing, or obvious scams. Otherwise, pass it. You must reply ONLY with a valid JSON in this exact format: {\"status\": \"PASS\" or \"FLAG\", \"reason\": \"Brief explanation\"}. Do not add markdown blocks or any other text."
+                "content": "You are a strict advertising moderation AI. Analyze the provided App Name, Headline, Description, and URL. Flag the ad if it contains or promotes: NSFW (nudity, pornography), illegal drugs, weapons, graphic violence, malware, phishing, or obvious scams. If it's a normal safe app/ad, you must pass it. Reply ONLY with a valid JSON in this exact format: {\"status\": \"PASS\" or \"FLAG\", \"reason\": \"Brief explanation\"}. Do not write any other text."
             },
             {
                 "role": "user",
-                "content": content
+                "content": text_prompt
             }
         ]
     }
@@ -67,72 +58,22 @@ def ask_cloudflare_ai(text_prompt, base64_images=None):
         if response.status_code == 200 and res_json.get("success"):
             ai_response = res_json["result"]["response"]
             
-            # FIX PARSING: A volte Cloudflare restituisce già un dict Python, a volte una stringa. Gestiamo entrambi.
+            # Se Cloudflare restituisce direttamente un Dizionario Python
             if isinstance(ai_response, dict):
                 return ai_response
                 
-            clean_json = ai_response.replace("```json", "").replace("```", "").strip()
-            try:
-                return json.loads(clean_json)
-            except json.JSONDecodeError:
-                print(f"⚠️ Errore JSON Decode. Testo AI raw: {clean_json}")
-                return {"status": "FLAG", "reason": "UNPARSEABLE_AI_OUTPUT"}
+            # Se restituisce una Stringa, usiamo la Regex per estrarre il JSON in modo infallibile
+            json_match = re.search(r'\{.*\}', ai_response.replace('\n', ''), re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group(0))
+            else:
+                return {"status": "FLAG", "reason": "AI did not return valid JSON format."}
         else:
             print(f"❌ Errore API Cloudflare: {response.text}")
             return {"status": "FLAG", "reason": "AI_API_ERROR"}
     except Exception as e:
-        print(f"❌ Errore di connessione o Parsing JSON dell'AI: {e}")
+        print(f"❌ Errore di connessione o Parsing: {e}")
         return {"status": "FLAG", "reason": "NETWORK_ERROR"}
-
-# ==========================
-# MEDIA PROCESSING
-# ==========================
-def extract_frames_base64(media_url):
-    """Scarica il file e, se immagine restituisce 1 frame base64, se video restituisce 3 frame."""
-    try:
-        res = requests.get(media_url, timeout=15)
-        if res.status_code != 200:
-            return None
-
-        ext = ".jpg"
-        if "mp4" in res.headers.get("Content-Type", "").lower() or media_url.endswith(".mp4"):
-            ext = ".mp4"
-
-        # Salva in un file temporaneo
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            tmp.write(res.content)
-            tmp_path = tmp.name
-
-        base64_frames = []
-
-        if ext == ".mp4":
-            vid = cv2.VideoCapture(tmp_path)
-            total_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
-            if total_frames > 0:
-                frame_indices = [int(total_frames * 0.1), int(total_frames * 0.5), int(total_frames * 0.9)]
-                
-                for idx in frame_indices:
-                    vid.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                    success, frame = vid.read()
-                    if success:
-                        frame = cv2.resize(frame, (512, 512), interpolation=cv2.INTER_AREA)
-                        _, buffer = cv2.imencode('.jpg', frame)
-                        base64_frames.append(base64.b64encode(buffer).decode('utf-8'))
-            vid.release()
-        else:
-            # Immagine statica
-            img = cv2.imread(tmp_path)
-            if img is not None:
-                img = cv2.resize(img, (512, 512), interpolation=cv2.INTER_AREA)
-                _, buffer = cv2.imencode('.jpg', img)
-                base64_frames.append(base64.b64encode(buffer).decode('utf-8'))
-
-        os.remove(tmp_path)
-        return base64_frames if base64_frames else None
-
-    except Exception as e:
-        print(f"⚠️ Errore processamento media: {e}")
-        return None
 
 # ==========================
 # ACTIONS
@@ -145,7 +86,7 @@ def approve_ad(ad_id):
 
 def flag_ad(ad_id, reason):
     print(f"🚨 FLAGGATO ({reason}): {ad_id}")
-    # Segnala 10 volte consecutive
+    # Segnala 10 volte consecutive per portarlo in stato "Flagged" nel database
     for _ in range(10):
         try:
             requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
@@ -158,6 +99,7 @@ def flag_ad(ad_id, reason):
 def run_sentinel():
     headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
     
+    # 1. Recupera SOLO gli annunci in attesa di revisione ("pending")
     try:
         res = requests.get(f"{WORKER_URL}/api/admin/creatives/pending", headers=headers, timeout=20)
         ads = res.json()
@@ -169,25 +111,24 @@ def run_sentinel():
         print("📭 Nessun annuncio in coda di revisione. Termino.")
         return
 
-    print(f"🔍 Trovati {len(ads)} annunci 'pending' da revisionare.")
+    # Limite di sicurezza sui costi
+    queue = ads[:MAX_ADS_PER_RUN]
+    
+    print(f"🔍 Trovati {len(ads)} annunci pending. Analizzo i primi {len(queue)}...")
 
-    for ad in ads:
+    for ad in queue:
         ad_id = ad["id"]
         print(f"\n⏳ Analisi annuncio: {ad.get('app_name')}...")
 
         text_prompt = f"App Name: {ad.get('app_name')}\nHeadline: {ad.get('headline')}\nDescription: {ad.get('description')}\nDestination URL: {ad.get('destination_url')}"
 
-        base64_images = None
-        if ad.get("media_url"):
-            base64_images = extract_frames_base64(ad["media_url"])
-
-        # Chiama l'Intelligenza Artificiale di Cloudflare
-        ai_verdict = ask_cloudflare_ai(text_prompt, base64_images)
+        # Chiama l'Intelligenza Artificiale (Solo Testo e URL)
+        ai_verdict = ask_cloudflare_ai(text_prompt)
 
         if ai_verdict.get("status") == "PASS":
             approve_ad(ad_id)
         else:
-            reason = ai_verdict.get("reason", "Violazione o errore non determinabile.")
+            reason = ai_verdict.get("reason", "Violazione Sconosciuta")
             flag_ad(ad_id, reason)
 
     print("\n🏁 Revisione automatica completata.")

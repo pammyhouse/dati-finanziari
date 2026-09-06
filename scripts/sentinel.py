@@ -6,7 +6,7 @@ import re
 import sys
 import tempfile
 
-import cv2  # opencv-python-headless: estrazione frame video senza dipendere da ffmpeg di sistema
+import cv2  # opencv-python-headless
 
 # ==========================
 # CONFIGURATION - SECRETS & LIMITS
@@ -21,49 +21,48 @@ if not all([SENTINEL_SECRET_KEY, CF_ACCOUNT_ID, CF_API_TOKEN]):
     print("❌ ERRORE CRITICO: Credenziali mancanti. Assicurati di aver configurato i GitHub Secrets.")
     sys.exit(1)
 
-# Tetto "morbido" per run: non e' la vera protezione (quella e' il rilevamento
-# del quota-exceeded qui sotto), mette solo un limite di buon senso a quante
-# richieste HTTP il job puo' fare in un singolo minuto, girando ogni ora.
 MAX_ADS_PER_RUN = 20
 
 TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
-# Vision: consumato via Cloudflare Workers AI come servizio -> non soggetto alla
-# clausola Meta che esclude gli sviluppatori con sede in UE che eseguono
-# direttamente i pesi del modello (quella clausola non vale per chi consuma il
-# modello come API di terzi). Fai comunque lo step di "agree" una tantum
-# sul tuo account prima del primo utilizzo.
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 
+# ==========================
+# IL NUOVO CERVELLO LEGALE (SCUDO ANTI-TRUFFA E ANTI-FALSI POSITIVI)
+# ==========================
 MODERATION_SYSTEM_PROMPT = (
-    "You are a strict advertising moderation AI for a GENERAL-PURPOSE ad network. "
-    "Destinations include mobile apps, games, e-commerce stores, business websites, and services — "
-    "NOT limited to app-store downloads. Analyze the provided ad content (and image, if present).\n\n"
-    "CRITICAL RULES — do not invent requirements beyond what is stated here:\n"
-    "- The destination URL may point to ANY legitimate website, store, app, or service. "
-    "It does NOT need to be a direct app-store/download link. Never reject for this reason.\n"
-    "- An unusual, niche, playful, humorous, religious, spiritual, or unconventional theme/branding "
-    "is NOT by itself a violation. Never reject purely based on subjective 'appropriateness' or "
-    "'professionalism' guesses.\n"
-    "- Short, minimal, or generic headline/description is NOT by itself a violation. Lack of "
-    "information is never grounds for rejection on its own.\n"
-    "- If you cannot point to one CONCRETE, OBJECTIVE problem from the categories below, you MUST "
-    "return PASS. When in doubt, PASS.\n\n"
+    "You are the Chief Legal & Moderation AI for a global advertising network. "
+    "Your job is to protect the network from severe legal liabilities (FTC, SEC, EU DSA compliance) "
+    "while being highly permissive towards unconventional, indie, or creative legal content.\n\n"
+    
+    "🛑 1. FINANCIAL & YMYL (Your Money Your Life) STRICT RULES:\n"
+    "REJECT any ad promoting 'get-rich-quick' schemes, 'guaranteed returns', 'zero risk' trading, "
+    "unregulated binary options, or fake celebrity endorsements for crypto. "
+    "PASS standard financial tools (portfolio trackers, technical analysis, budget apps, crypto wallets, trading platforms) AS LONG AS they do not make deceptive, guaranteed profit promises.\n\n"
+    
+    "🛑 2. DECEPTIVE, SCAM & LOW QUALITY RULES:\n"
+    "REJECT ads simulating system warnings (e.g., 'Your phone has a virus!', 'Update required'), "
+    "phishing attempts, tech support scams, or ads with completely gibberish/incomprehensible text (spam). "
+    "REJECT unlicensed real-money gambling promising guaranteed wins.\n\n"
+    
+    "🛑 3. ILLEGAL & ADULT CONTENT:\n"
+    "REJECT pornographic content, explicit nudity, illegal drugs, firearms/weapons sale, graphic violence, or malware.\n\n"
+    
+    "✅ 4. FALSE POSITIVES PREVENTION (MUST ALLOW):\n"
+    "- Religious, spiritual, or cultural content (e.g., monks, incense, prayers, tarot) is perfectly LEGAL. DO NOT flag it.\n"
+    "- Humor, sarcasm, gaming fantasy violence (e.g., cartoon/game battles), and unconventional indie designs are LEGAL. DO NOT flag them.\n"
+    "- Short or generic descriptions are LEGAL. Lack of context is not a violation.\n"
+    "- URLs pointing to standard websites or landing pages instead of app stores are LEGAL.\n\n"
+    
+    "When in doubt, if no explicit illegal or deceptive boundary is crossed, you MUST PASS the ad.\n\n"
+    
     "Classify using two fields:\n"
-    "1) status: \"PASS\" if the ad is safe and you found no concrete violation; \"REJECT\" only if "
-    "you found one.\n"
-    "2) severity: only meaningful when status is REJECT.\n"
-    "   - \"SEVERE\": NSFW/pornographic content, illegal drugs, weapons, graphic violence, malware, "
-    "phishing, scams, or any other illegal activity.\n"
-    "   - \"MINOR\": only concrete, objective issues, such as the image/video clearly depicting "
-    "something unrelated to or inconsistent with the stated app/product, or media that is obviously "
-    "manipulated/deceptive.\n"
+    "1) status: \"PASS\" if safe; \"REJECT\" ONLY if you found a concrete violation.\n"
+    "2) severity: \"SEVERE\" (illegal, porn, extreme scams, deceptive financial promises); \"MINOR\" (spam, gibberish text, misleading clickbait); \"NONE\" (if PASS).\n"
     "Reply ONLY with a valid JSON in this exact format: "
-    "{\"status\": \"PASS\" or \"REJECT\", \"severity\": \"SEVERE\" or \"MINOR\" or \"NONE\", "
-    "\"reason\": \"Brief explanation\"}. Do not write any other text."
+    "{\"status\": \"PASS\" or \"REJECT\", \"severity\": \"SEVERE\" or \"MINOR\" or \"NONE\", \"reason\": \"Brief objective explanation if rejected\"}. Do not write any other text or markdown."
 )
 
-print("🤖 Avvio AdSwap Sentinel AI...")
-
+print("🤖 Avvio AdSwap Sentinel AI (Legal Compliance Mode)...")
 
 # ==========================
 # HELPER: CLOUDFLARE AI (TESTO)
@@ -79,7 +78,6 @@ def ask_cloudflare_text(text_prompt):
     }
     return _call_and_parse(url, headers, payload)
 
-
 # ==========================
 # HELPER: CLOUDFLARE AI (VISION)
 # ==========================
@@ -90,20 +88,16 @@ def ask_cloudflare_vision(image_bytes, text_context):
         "image": list(image_bytes),
         "prompt": (
             MODERATION_SYSTEM_PROMPT
-            + "\n\nAd context (for reference only, judge mainly the image): "
+            + "\n\nAd context (for reference only, verify the image against policies): "
             + text_context
         )
     }
     return _call_and_parse(url, headers, payload)
 
-
 def _call_and_parse(url, headers, payload):
-    """Ritorna sempre un dict con 'status' in {PASS, REJECT, ERROR, QUOTA_EXCEEDED}."""
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=45)
 
-        # Rilevamento budget neuroni esaurito: Cloudflare risponde 429, oppure
-        # 200 con success=false e un messaggio d'errore che menziona il limite.
         if response.status_code == 429:
             return {"status": "QUOTA_EXCEEDED", "severity": "NONE", "reason": "HTTP 429"}
 
@@ -129,7 +123,6 @@ def _call_and_parse(url, headers, payload):
         print(f"❌ Errore di connessione o Parsing: {e}")
         return {"status": "ERROR", "severity": "NONE", "reason": "NETWORK_ERROR"}
 
-
 def _normalize_verdict(v):
     status = v.get("status", "REJECT")
     if status not in ("PASS", "REJECT"):
@@ -137,44 +130,43 @@ def _normalize_verdict(v):
     severity = v.get("severity", "NONE")
     if severity not in ("SEVERE", "MINOR", "NONE"):
         severity = "MINOR" if status == "REJECT" else "NONE"
-    return {"status": status, "severity": severity, "reason": v.get("reason", "Violazione policy.")}
-
+    return {"status": status, "severity": severity, "reason": v.get("reason", "Policy violation.")}
 
 # ==========================
 # HELPER: MEDIA (IMMAGINE / FRAME VIDEO)
 # ==========================
 def fetch_media_bytes(media_url):
-    """Scarica il media; se e' un video, estrae un frame con OpenCV. Ritorna bytes JPEG o None."""
     if not media_url:
         return None
     try:
         raw = requests.get(media_url, timeout=20).content
         is_video = media_url.lower().endswith(".mp4")
 
-        if not is_video:
-            return raw
+        with tempfile.NamedTemporaryFile(suffix=".mp4" if is_video else ".jpg") as tmp_f:
+            tmp_f.write(raw)
+            tmp_f.flush()
 
-        with tempfile.NamedTemporaryFile(suffix=".mp4") as vid_f:
-            vid_f.write(raw)
-            vid_f.flush()
+            if is_video:
+                cap = cv2.VideoCapture(tmp_f.name)
+                fps = cap.get(cv2.CAP_PROP_FPS) or 0
+                if fps > 0:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps))
+                success, frame = cap.read()
+                cap.release()
+                if not success:
+                    return None
+                img = frame
+            else:
+                img = cv2.imread(tmp_f.name)
+                if img is None:
+                    return None
 
-            cap = cv2.VideoCapture(vid_f.name)
-            # Prova a saltare ~1 secondo per evitare fotogrammi neri iniziali
-            fps = cap.get(cv2.CAP_PROP_FPS) or 0
-            if fps > 0:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps))
-            success, frame = cap.read()
-            cap.release()
-
-            if not success:
-                return None
-
-            ok, encoded = cv2.imencode(".jpg", frame)
+            img = cv2.resize(img, (400, 400), interpolation=cv2.INTER_AREA)
+            ok, encoded = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
             return encoded.tobytes() if ok else None
     except Exception as e:
-        print(f"⚠️ Impossibile estrarre il media per l'analisi visiva: {e}")
+        print(f"⚠️ Impossibile estrarre o comprimere il media per l'analisi visiva: {e}")
         return None
-
 
 # ==========================
 # ACTIONS
@@ -187,7 +179,6 @@ def approve_ad(ad_id):
     except Exception:
         pass
 
-
 def reject_ad(ad_id, reason):
     print(f"🛑 RIFIUTATO ({reason}): {ad_id}")
     try:
@@ -197,16 +188,14 @@ def reject_ad(ad_id, reason):
     except Exception:
         pass
 
-
 def flag_ad(ad_id):
-    print(f"🚨 SEGNALATO (contenuto grave): {ad_id}")
+    print(f"🚨 SEGNALATO (contenuto grave, innesca sospensione account): {ad_id}")
     for _ in range(10):
         try:
             requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
             time.sleep(0.2)
         except Exception:
             pass
-
 
 # ==========================
 # MAIN LOOP
@@ -243,22 +232,21 @@ def run_sentinel():
         text_verdict = ask_cloudflare_text(text_prompt)
 
         if text_verdict["status"] == "QUOTA_EXCEEDED":
-            print("⛔ Budget neuroni Cloudflare esaurito per oggi. Interrompo il run: "
-                  "gli annunci restanti verranno ripresi al prossimo giro orario.")
+            print("⛔ Budget neuroni Cloudflare esaurito per oggi. Interrompo il run.")
             break
-
         if text_verdict["status"] == "ERROR":
-            print(f"⏭️  Salto per errore infrastrutturale ({text_verdict['reason']}), riproverò più tardi.")
+            print(f"⏭️  Salto per errore infrastrutturale ({text_verdict['reason']}).")
             processed += 1
             continue
 
         media_bytes = fetch_media_bytes(ad.get("media_url"))
         vision_verdict = None
+        
         if media_bytes:
             vision_verdict = ask_cloudflare_vision(media_bytes, text_prompt)
+            
             if vision_verdict["status"] == "QUOTA_EXCEEDED":
-                print("⛔ Budget neuroni Cloudflare esaurito per oggi (durante l'analisi vision). "
-                      "Interrompo il run.")
+                print("⛔ Budget neuroni Cloudflare esaurito (vision). Interrompo il run.")
                 break
             if vision_verdict["status"] == "ERROR":
                 print(f"⚠️ Analisi visiva non riuscita ({vision_verdict['reason']}), procedo solo con il testo.")
@@ -270,18 +258,22 @@ def run_sentinel():
         if not final_reject:
             approve_ad(ad_id)
         else:
-            severe_hits = [v for v in verdicts if v["status"] == "REJECT" and v["severity"] == "SEVERE"]
+            # Raccogliamo la severità più alta
+            is_severe = any(v["severity"] == "SEVERE" for v in verdicts)
             reasons = [v["reason"] for v in verdicts if v["status"] == "REJECT"]
             combined_reason = " | ".join(dict.fromkeys(reasons))
 
+            # Lo rifiutiamo sulla dashboard mettendoci il motivo testuale
             reject_ad(ad_id, combined_reason)
-            if severe_hits:
+            
+            # SE E SOLO SE l'infrazione è gravissima (pornografia, truffe finanziarie esplicite, phishing)
+            # invochiamo la funzione flag_ad che fa bannare temporaneamente l'utente
+            if is_severe:
                 flag_ad(ad_id)
 
         processed += 1
 
     print(f"\n🏁 Revisione automatica completata. Annunci processati in questo run: {processed}.")
-
 
 if __name__ == "__main__":
     run_sentinel()

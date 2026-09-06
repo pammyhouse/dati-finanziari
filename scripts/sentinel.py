@@ -21,8 +21,8 @@ if not all([SENTINEL_SECRET_KEY, CF_ACCOUNT_ID, CF_API_TOKEN]):
     print("❌ ERRORE CRITICO: Credenziali mancanti. Assicurati di aver configurato i GitHub Secrets.")
     sys.exit(1)
 
-# Modelli Cloudflare
-VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
+# Modelli Cloudflare - FIX: Sostituito Llama 3.2 Vision (Bannato in UE) con LLaVA (Open e globale)
+VISION_MODEL = "@cf/llava-hf/llava-1.5-7b-hf"
 TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
 
 print("🤖 Avvio AdSwap Sentinel AI...")
@@ -66,15 +66,23 @@ def ask_cloudflare_ai(text_prompt, base64_images=None):
         
         if response.status_code == 200 and res_json.get("success"):
             ai_response = res_json["result"]["response"]
-            # Puliamo eventuali markdown residui (es. ```json ... ```) restituiti dall'AI
+            
+            # FIX PARSING: A volte Cloudflare restituisce già un dict Python, a volte una stringa. Gestiamo entrambi.
+            if isinstance(ai_response, dict):
+                return ai_response
+                
             clean_json = ai_response.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean_json)
+            try:
+                return json.loads(clean_json)
+            except json.JSONDecodeError:
+                print(f"⚠️ Errore JSON Decode. Testo AI raw: {clean_json}")
+                return {"status": "FLAG", "reason": "UNPARSEABLE_AI_OUTPUT"}
         else:
             print(f"❌ Errore API Cloudflare: {response.text}")
             return {"status": "FLAG", "reason": "AI_API_ERROR"}
     except Exception as e:
         print(f"❌ Errore di connessione o Parsing JSON dell'AI: {e}")
-        return {"status": "FLAG", "reason": "PARSE_ERROR"}
+        return {"status": "FLAG", "reason": "NETWORK_ERROR"}
 
 # ==========================
 # MEDIA PROCESSING
@@ -100,17 +108,16 @@ def extract_frames_base64(media_url):
         if ext == ".mp4":
             vid = cv2.VideoCapture(tmp_path)
             total_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
-            # Prendiamo 3 frame significativi dal video
-            frame_indices = [int(total_frames * 0.1), int(total_frames * 0.5), int(total_frames * 0.9)]
-            
-            for idx in frame_indices:
-                vid.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                success, frame = vid.read()
-                if success:
-                    # Rimpiccioliamo a 512x512 per risparmiare token ed evitare errori di Payload Size
-                    frame = cv2.resize(frame, (512, 512), interpolation=cv2.INTER_AREA)
-                    _, buffer = cv2.imencode('.jpg', frame)
-                    base64_frames.append(base64.b64encode(buffer).decode('utf-8'))
+            if total_frames > 0:
+                frame_indices = [int(total_frames * 0.1), int(total_frames * 0.5), int(total_frames * 0.9)]
+                
+                for idx in frame_indices:
+                    vid.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                    success, frame = vid.read()
+                    if success:
+                        frame = cv2.resize(frame, (512, 512), interpolation=cv2.INTER_AREA)
+                        _, buffer = cv2.imencode('.jpg', frame)
+                        base64_frames.append(base64.b64encode(buffer).decode('utf-8'))
             vid.release()
         else:
             # Immagine statica
@@ -138,7 +145,7 @@ def approve_ad(ad_id):
 
 def flag_ad(ad_id, reason):
     print(f"🚨 FLAGGATO ({reason}): {ad_id}")
-    # Chiama l'API report 10 volte consecutive per farlo finire subito in stato 'Flagged' (necessari 3 report nel DB)
+    # Segnala 10 volte consecutive
     for _ in range(10):
         try:
             requests.post(f"{WORKER_URL}/api/report?id={ad_id}", timeout=5)
@@ -151,7 +158,6 @@ def flag_ad(ad_id, reason):
 def run_sentinel():
     headers = {"X-Sentinel-Key": SENTINEL_SECRET_KEY}
     
-    # 1. Recupera SOLO gli annunci in attesa di revisione ("pending")
     try:
         res = requests.get(f"{WORKER_URL}/api/admin/creatives/pending", headers=headers, timeout=20)
         ads = res.json()
@@ -181,7 +187,7 @@ def run_sentinel():
         if ai_verdict.get("status") == "PASS":
             approve_ad(ad_id)
         else:
-            reason = ai_verdict.get("reason", "Violazione Sconosciuta o non determinabile.")
+            reason = ai_verdict.get("reason", "Violazione o errore non determinabile.")
             flag_ad(ad_id, reason)
 
     print("\n🏁 Revisione automatica completata.")

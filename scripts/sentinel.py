@@ -37,15 +37,15 @@ MODERATION_SYSTEM_PROMPT = (
     "🛑 1. FINANCIAL & YMYL (Your Money Your Life) STRICT RULES:\n"
     "REJECT any ad promoting 'get-rich-quick' schemes, 'guaranteed returns', 'zero risk' trading, "
     "unregulated binary options, or fake celebrity endorsements for crypto. "
-    "PASS standard financial tools (portfolio trackers, technical analysis, budget apps, crypto wallets, trading platforms) AS LONG AS they do not make deceptive, guaranteed profit promises.\n\n"
+    "PASS standard financial tools (portfolio trackers, technical analysis, budget apps, crypto wallets) AS LONG AS they do not make deceptive, guaranteed profit promises.\n\n"
+
+    "🛑 2. GAMBLING & HEALTHCARE STRICT RULES:\n"
+    "REJECT real-money gambling, unlicensed online casinos, sports betting, or lotteries offering actual cash prizes. (Simulated social casino games for fun/virtual coins are allowed).\n"
+    "REJECT miracle cures, unregulated supplements, weight-loss scams, or unverified medical claims.\n\n"
     
-    "🛑 2. DECEPTIVE, SCAM & LOW QUALITY RULES:\n"
-    "REJECT ads simulating system warnings (e.g., 'Your phone has a virus!', 'Update required'), "
-    "phishing attempts, tech support scams, or ads with completely gibberish/incomprehensible text (spam). "
-    "REJECT unlicensed real-money gambling promising guaranteed wins.\n\n"
-    
-    "🛑 3. ILLEGAL & ADULT CONTENT:\n"
-    "REJECT pornographic content, explicit nudity, illegal drugs, firearms/weapons sale, graphic violence, or malware.\n\n"
+    "🛑 3. DECEPTIVE, SCAM & ILLEGAL CONTENT:\n"
+    "REJECT ads simulating system warnings (e.g., 'Your phone has a virus!'), phishing attempts, or ads with completely gibberish text (spam). "
+    "REJECT explicit pornography, illegal drugs, firearms/weapons sale, graphic violence, or malware.\n\n"
     
     "✅ 4. FALSE POSITIVES PREVENTION (MUST ALLOW):\n"
     "- Religious, spiritual, or cultural content (e.g., monks, incense, prayers, tarot) is perfectly LEGAL. DO NOT flag it.\n"
@@ -57,7 +57,7 @@ MODERATION_SYSTEM_PROMPT = (
     
     "Classify using two fields:\n"
     "1) status: \"PASS\" if safe; \"REJECT\" ONLY if you found a concrete violation.\n"
-    "2) severity: \"SEVERE\" (illegal, porn, extreme scams, deceptive financial promises); \"MINOR\" (spam, gibberish text, misleading clickbait); \"NONE\" (if PASS).\n"
+    "2) severity: \"SEVERE\" (illegal, porn, extreme scams, deceptive financial promises, real-money gambling); \"MINOR\" (spam, gibberish text, misleading clickbait); \"NONE\" (if PASS).\n"
     "Reply ONLY with a valid JSON in this exact format: "
     "{\"status\": \"PASS\" or \"REJECT\", \"severity\": \"SEVERE\" or \"MINOR\" or \"NONE\", \"reason\": \"Brief objective explanation if rejected\"}. Do not write any other text or markdown."
 )

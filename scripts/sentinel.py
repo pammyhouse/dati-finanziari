@@ -50,10 +50,10 @@ MODERATION_SYSTEM_PROMPT = (
     "✅ 4. FALSE POSITIVES PREVENTION (MUST ALLOW):\n"
     "- Religious, spiritual, or cultural content (e.g., monks, incense, prayers, tarot) is perfectly LEGAL. DO NOT flag it.\n"
     "- Humor, sarcasm, gaming fantasy violence (e.g., cartoon/game battles), and unconventional indie designs are LEGAL. DO NOT flag them.\n"
-    "- Short or generic descriptions are LEGAL. Lack of context is not a violation.\n"
-    "- URLs pointing to standard websites or landing pages instead of app stores are LEGAL.\n\n"
+    "- REJECT too short or too generic descriptions or if they have lack of context.\n"
+    "- URLs pointing to standard websites or landing pages instead of app stores are LEGAL, but they must match the product and must be existing.\n\n"
     
-    "When in doubt, if no explicit illegal or deceptive boundary is crossed, you MUST PASS the ad.\n\n"
+    "When in doubt, if no explicit illegal or deceptive boundary is crossed, you MUST REJECT the ad and say you need more info/details.\n\n"
     
     "Classify using two fields:\n"
     "1) status: \"PASS\" if safe; \"REJECT\" ONLY if you found a concrete violation.\n"
